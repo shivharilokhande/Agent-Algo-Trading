@@ -1,0 +1,29 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      - AGENTALGO_DATA_DIR=/data
+      - AGENTALGO_SECRET_KEY=${AGENTALGO_SECRET_KEY:?set in .env}
+      - AGENTALGO_FERNET_KEY=${AGENTALGO_FERNET_KEY:?set in .env}
+      - AGENTALGO_CORS_ORIGINS=${AGENTALGO_CORS_ORIGINS:-http://localhost:8080}
+      - AGENTALGO_DEMO_MODE=${AGENTALGO_DEMO_MODE:-true}
+    volumes:
+      - agentalgo-data:/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  agentalgo-data:
