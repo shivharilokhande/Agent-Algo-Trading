@@ -1,5 +1,35 @@
 # AgentAlgo — Quality Report
 
+## Round 3 — Phase 2–4 review (2026-09-04, fresh-context reviewer)
+
+Scope: all Phase 2–4 code (queue pump, HITL, alerts, paper trading, ensembles,
+triggers, Agent Studio, research library, background loops). 14 findings, all fixed
+same day; **58/58 tests green** including 6 new regression tests.
+
+| ID | Finding | Severity | Status |
+|---|---|---|---|
+| R3-1 | Deleting an ensemble member run 500'd `/ensembles` permanently (empty-set meta-judge) | High | **Fixed** (guards + cache invalidation) + regression test |
+| R3-2 | HITL-paused runs wedged forever after a server restart | High | **Fixed** (paused included in stale sweep) + test |
+| R3-3 | Stored XSS via library snippets in Research page (EDGAR/persona text) | High | **Fixed** (escape before mark substitution) |
+| R3-4 | Malformed FTS queries 500'd search | Medium | **Fixed** (term quoting + operator stripping + fail-safe) + test |
+| R3-5 | Paper trading could double-open on concurrent runs (ensembles) | Medium | **Fixed** (re-check in write session) + concurrency test |
+| R3-6 | Ensemble stacks spammed rating-change alerts against each other | Medium | **Fixed** (stack runs excluded both directions) + test |
+| R3-7 | Multi-MB EDGAR regex stripping ran on the event loop | Medium | **Fixed** (threaded + input cap) |
+| R3-8 | Cross-tenant crowd-out of the FTS result window | Medium | **Mitigated** (8× over-fetch; per-user FTS column ticketed) |
+| R3-9 | Repeated run indexing duplicated library documents | Low | **Fixed** (idempotent) + test |
+| R3-10 | f-string SQL in FTS purge (not yet injectable) | Low | **Fixed** (expanding bindparam, chunked) |
+| R3-11 | Trigger sweep starvation past the scan window | Low | **Fixed** (fair ordering, larger window) |
+| R3-12 | Cancel-during-pause turned ask/proceed into 500s | Low | **Fixed** (RunCancelled → 409) |
+| R3-13 | Schedule sweep could refire and duplicate runs after mid-sweep crash | Low | **Fixed** (mark-fired-first) |
+| R3-14 | Custom-analyst report tab missing in live view | Low | **Fixed** |
+
+Also this round: root-caused the "app is crashing" report — the backend process was
+being killed when terminal sessions were reaped (external SIGKILL, no app fault).
+Dev runs now use `backend/run_dev.sh`: uvicorn in its own session with an
+auto-restart supervisor. Reviewer confirmed tenant isolation across all 30+ new
+endpoints, safe EDGAR fetching, and crash-proof background loops.
+
+
 **Date:** 2026-09-04 · **Version:** 1.1.0 · **Verdict: PASS — approved for production (single-worker deployment)**
 
 ## Round 2 — production-hardening review (fresh-context reviewer)

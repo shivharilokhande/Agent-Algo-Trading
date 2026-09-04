@@ -99,6 +99,10 @@ async def _schedule_loop() -> None:
                     if schedule_is_due(s.cadence, s.weekday, s.hour, s.last_fired_date, now)
                 ]
                 for s in due:
+                    # R3-13: mark fired FIRST so a mid-sweep crash can't refire and
+                    # duplicate every run a minute later
+                    s.last_fired_date = now.date().isoformat()
+                    db.commit()
                     base = {"trade_date": now.date().isoformat(), "mode": "demo",
                             "research_depth": 1, **json.loads(s.config_json or "{}")}
                     for ticker in json.loads(s.tickers_json):
@@ -106,9 +110,7 @@ async def _schedule_loop() -> None:
                             await create_run_for_user(db, s.user_id, {**base, "ticker": ticker})
                         except RunValidationError as exc:
                             log.info("Schedule %s skipped %s: %s", s.name, ticker, exc)
-                    s.last_fired_date = now.date().isoformat()
                     log.info("Schedule fired: %s (%s tickers)", s.name, len(json.loads(s.tickers_json)))
-                db.commit()
         except Exception:  # pragma: no cover
             log.exception("Schedule sweep failed")
         await asyncio.sleep(SCHEDULE_POLL_SECONDS)
@@ -141,7 +143,8 @@ async def _trigger_loop() -> None:
                 triggers = (
                     db.query(Trigger)
                     .filter(Trigger.enabled.is_(True), Trigger.last_fired_date != today)
-                    .limit(100).all()
+                    .order_by(Trigger.last_fired_date, Trigger.created_at)  # R3-11: fair rotation
+                    .limit(500).all()
                 )
                 for t in triggers:
                     try:
@@ -173,8 +176,9 @@ async def _trigger_loop() -> None:
 async def lifespan(app: FastAPI):
     init_db()
     with SessionLocal() as db:
-        # F9 — runs mid-execution at shutdown are resumable; queued runs restart via the pump
-        stale = db.query(Run).filter(Run.status == "running").all()
+        # F9 — runs mid-execution (or paused at the HITL breakpoint, R3-2) at shutdown
+        # become resumable; queued runs restart via the pump
+        stale = db.query(Run).filter(Run.status.in_(("running", "paused"))).all()
         for run in stale:
             run.status = "interrupted"
             run.error = "Server restarted mid-run — resume to continue from checkpoint."

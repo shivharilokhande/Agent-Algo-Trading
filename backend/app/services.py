@@ -23,10 +23,18 @@ class RunValidationError(ValueError):
 
 def detach_run_references(db: Session, run_id: str) -> None:
     """Null out soft references so a run can be deleted under FK enforcement."""
-    from .models import Alert, MemoryEntry, PaperPosition
+    import json as _json
+
+    from .models import Alert, Ensemble, MemoryEntry, PaperPosition
 
     for model in (MemoryEntry, Alert, PaperPosition):
         db.query(model).filter(model.run_id == run_id).update({"run_id": None})
+    # R3-1: invalidate cached consensus for ensembles that referenced this run.
+    # run_ids_json keeps the original id (it's a soft JSON reference, no FK) so the
+    # member count stays honest and a partial set can never be judged "complete".
+    for ens in db.query(Ensemble).filter(Ensemble.run_ids_json.contains(run_id)).all():
+        ens.consensus_json = ""
+    _ = _json  # id list intentionally left untouched
 
 
 def purge_user_data(db: Session, user_id: str) -> None:
@@ -35,17 +43,20 @@ def purge_user_data(db: Session, user_id: str) -> None:
     Runs/events/reports/keys cascade from User; everything else is explicit so
     account deletion can never 500 on a foreign key (C1 family).
     """
+    from sqlalchemy import bindparam, text as sql
+
     from .models import (
         AgentProfile, Alert, Document, Ensemble, MemoryEntry, PaperPosition,
         Preset, Schedule, Setting, Trigger, Watchlist,
     )
-    from sqlalchemy import text as sql
 
-    # drop FTS rows for the user's documents first
+    # drop FTS rows for the user's documents first (R3-10: parameterized, chunked)
     doc_ids = [d[0] for d in db.query(Document.id).filter(Document.user_id == user_id).all()]
-    if doc_ids:
-        placeholders = ",".join(f"'{i}'" for i in doc_ids)
-        db.execute(sql(f"DELETE FROM documents_fts WHERE doc_id IN ({placeholders})"))
+    stmt = sql("DELETE FROM documents_fts WHERE doc_id IN :ids").bindparams(
+        bindparam("ids", expanding=True)
+    )
+    for i in range(0, len(doc_ids), 200):
+        db.execute(stmt, {"ids": doc_ids[i:i + 200]})
     for model in (Alert, PaperPosition, MemoryEntry, Preset, Setting, Watchlist,
                   Schedule, Trigger, AgentProfile, Document, Ensemble):
         db.query(model).filter(model.user_id == user_id).delete()

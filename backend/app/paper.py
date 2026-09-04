@@ -63,6 +63,17 @@ async def execute_decision(run_id: str) -> PaperPosition | None:
         size = notional if rating == "Buy" else notional / 2
         price = await last_price(run.ticker)
         with SessionLocal() as db:
+            # R3-5: re-check inside the write session — concurrent runs (ensembles)
+            # must not double-open the same ticker
+            dup = (
+                db.query(PaperPosition)
+                .filter(PaperPosition.user_id == run.user_id,
+                        PaperPosition.ticker == run.ticker,
+                        PaperPosition.status == "open")
+                .first()
+            )
+            if dup is not None:
+                return None
             pos = PaperPosition(
                 user_id=run.user_id, run_id=run.id, ticker=run.ticker, rating=rating,
                 qty=round(size / price, 6), entry_price=round(price, 4), notional=size,

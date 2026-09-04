@@ -49,18 +49,28 @@ def add_document(user_id: str, ticker: str, source: str, title: str,
 def search(user_id: str, query: str, ticker: str | None = None,
            as_of: str | None = None, limit: int = 8) -> list[dict]:
     """BM25-ranked snippets from the user's library."""
-    safe = _FTS_QUERY_SANITIZE.sub(" ", query).strip()
-    if not safe:
+    # R3-4: quote-wrap every term — neutralizes FTS operators (AND/OR/NOT),
+    # unbalanced quotes, and syntax that would otherwise 500 the endpoint.
+    terms = _FTS_QUERY_SANITIZE.sub(" ", query).replace('"', " ").split()
+    keep_or = "OR" in terms  # grounding queries rely on OR recall
+    terms = [t for t in terms if t.upper() not in ("AND", "OR", "NOT")]
+    if not terms:
         return []
-    with engine.connect() as conn:
-        rows = conn.execute(
-            sql(
-                "SELECT f.doc_id, snippet(documents_fts, 0, '«', '»', ' … ', 24) AS snip, "
-                "bm25(documents_fts) AS score FROM documents_fts f "
-                "WHERE documents_fts MATCH :q ORDER BY score LIMIT 50"
-            ),
-            {"q": safe},
-        ).fetchall()
+    joiner = " OR " if keep_or else " "
+    safe = joiner.join(f'"{t}"' for t in terms[:12])
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sql(
+                    "SELECT f.doc_id, snippet(documents_fts, 0, '«', '»', ' … ', 24) AS snip, "
+                    "bm25(documents_fts) AS score FROM documents_fts f "
+                    # R3-8: over-fetch so one tenant's library can't crowd out another's window
+                    "WHERE documents_fts MATCH :q ORDER BY score LIMIT 400"
+                ),
+                {"q": safe},
+            ).fetchall()
+    except Exception:  # malformed residue must never 500 a search
+        return []
     if not rows:
         return []
     snippets = {r[0]: r[1] for r in rows}
@@ -133,11 +143,14 @@ async def ingest_sec_filings(user_id: str, ticker: str, max_filings: int = 3) ->
             try:
                 fr = await client.get(url)
                 fr.raise_for_status()
-                text_content = _WS_RE.sub(" ", _TAG_RE.sub(" ", fr.text))
-                await asyncio.to_thread(
-                    add_document, user_id, ticker, "sec_filing",
-                    f"{base} {form} filed {filed}", filed, url, text_content,
-                )
+
+                def _strip_and_store(raw: str) -> None:  # R3-7: multi-MB regex off the loop
+                    raw = raw[:800_000]  # plenty for a 60k-char content cap
+                    text_content = _WS_RE.sub(" ", _TAG_RE.sub(" ", raw))
+                    add_document(user_id, ticker, "sec_filing",
+                                 f"{base} {form} filed {filed}", filed, url, text_content)
+
+                await asyncio.to_thread(_strip_and_store, fr.text)
                 ingested.append({"form": form, "filed": filed, "url": url})
             except httpx.HTTPError as exc:
                 log.info("EDGAR doc fetch failed %s: %s", url, exc)
@@ -151,6 +164,14 @@ def index_run_reports(user_id: str, run_id: str) -> None:
     with SessionLocal() as db:
         run = db.get(Run, run_id)
         if run is None:
+            return
+        # R3-9: idempotent — skip if this run was already indexed
+        existing = (
+            db.query(Document)
+            .filter(Document.user_id == user_id, Document.url == f"/runs/{run_id}")
+            .count()
+        )
+        if existing:
             return
         reports = db.query(RunReport).filter(RunReport.run_id == run_id).all()
         for r in reports:

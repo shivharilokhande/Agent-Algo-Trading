@@ -72,7 +72,11 @@ export default function Research() {
               <div key={h.id} style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
                 <b>{h.title}</b> <span className={`pill ${h.source === "sec_filing" ? "running" : "pending"}`}>{h.source.replace("_", " ")}</span>
                 <div className="muted" style={{ marginTop: 4 }}
-                  dangerouslySetInnerHTML={{ __html: h.snippet.replace(/«/g, "<mark>").replace(/»/g, "</mark>") }} />
+                  dangerouslySetInnerHTML={{
+                    __html: h.snippet  // R3-3: escape BEFORE the mark substitution
+                      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                      .replace(/«/g, "<mark>").replace(/»/g, "</mark>"),
+                  }} />
                 {h.url.startsWith("http") && <a href={h.url} target="_blank" rel="noreferrer">source ↗</a>}
               </div>
             ))}

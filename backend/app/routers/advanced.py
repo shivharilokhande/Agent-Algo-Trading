@@ -70,7 +70,7 @@ async def create_ensemble(
 def _meta_judge(runs: list[Run]) -> dict:
     """Deterministic arbitration: agreement level + dissent surfacing."""
     ratings = [r.rating for r in runs if r.rating]
-    if len(ratings) < len(runs):
+    if not ratings or len(ratings) < len(runs):  # R3-1: empty/partial sets never judge
         return {"status": "pending"}
     distinct = set(ratings)
     if len(distinct) == 1:
@@ -100,7 +100,10 @@ def _ensemble_out(db: Session, ens: Ensemble) -> dict:
     run_ids = json.loads(ens.run_ids_json)
     runs = {r.id: r for r in db.query(Run).filter(Run.id.in_(run_ids)).all()}
     ordered = [runs[i] for i in run_ids if i in runs]
-    all_done = all(r.status == "done" for r in ordered)
+    # R3-1: a consensus needs the FULL stack set — deleted member runs disqualify it
+    all_done = bool(ordered) and len(ordered) == len(run_ids) and all(
+        r.status == "done" for r in ordered
+    )
     consensus = json.loads(ens.consensus_json) if ens.consensus_json else None
     if all_done and not consensus:
         consensus = _meta_judge(ordered)

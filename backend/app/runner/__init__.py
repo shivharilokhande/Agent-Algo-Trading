@@ -141,11 +141,14 @@ class RunManager:
         handle = self._handles.get(run_id)
         if handle is None or not handle.paused:
             return False
-        handle.qa_count += 1
-        await self.emit(handle, "message", agent="You",
-                        payload={"kind": "user_question", "text": f"→ {agent}: {question}"})
-        await self.emit(handle, "message", agent=agent,
-                        payload={"kind": "agent_answer", "text": answer})
+        try:
+            handle.qa_count += 1
+            await self.emit(handle, "message", agent="You",
+                            payload={"kind": "user_question", "text": f"→ {agent}: {question}"})
+            await self.emit(handle, "message", agent=agent,
+                            payload={"kind": "agent_answer", "text": answer})
+        except RunCancelled:  # R3-12: cancelled while paused → 409, not 500
+            return False
         return True
 
     def is_paused(self, run_id: str) -> bool:
@@ -366,7 +369,14 @@ manager = RunManager()
 
 
 def maybe_create_alert(db, run: Run) -> None:
-    """P2.3 — alert on REVIEW or a rating-tier change vs. the previous done run."""
+    """P2.3 — alert on REVIEW or a rating-tier change vs. the previous done run.
+
+    R3-6: ensemble stack runs never alert (and are never used as the baseline) —
+    divergence between stacks is the ensemble page's job, not the alert feed's.
+    """
+    run_cfg = json.loads(run.config_json or "{}")
+    if run_cfg.get("_stack_tag"):
+        return
     if run.rating == "REVIEW":
         db.add(Alert(
             user_id=run.user_id, run_id=run.id, ticker=run.ticker, type="review",
@@ -374,12 +384,17 @@ def maybe_create_alert(db, run: Run) -> None:
         ))
         db.commit()
         return
-    prev = (
+    candidates = (
         db.query(Run)
         .filter(Run.user_id == run.user_id, Run.ticker == run.ticker,
                 Run.status == "done", Run.id != run.id, Run.rating.isnot(None))
         .order_by(Run.finished_at.desc())
-        .first()
+        .limit(10)
+        .all()
+    )
+    prev = next(  # R3-6: skip ensemble stacks as the comparison baseline
+        (c for c in candidates if not json.loads(c.config_json or "{}").get("_stack_tag")),
+        None,
     )
     if prev is not None and run.rating and prev.rating != run.rating:
         db.add(Alert(
