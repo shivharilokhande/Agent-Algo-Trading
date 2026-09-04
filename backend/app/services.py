@@ -42,6 +42,10 @@ def build_run(db: Session, user_id: str, cfg: dict) -> Run:
     mode = cfg.get("mode", "demo")
     if mode not in ("demo", "engine"):
         raise RunValidationError("mode must be demo or engine")
+    if cfg.get("hitl") and mode != "demo":
+        raise RunValidationError(
+            "Human-in-the-loop pause is demo-mode only for now (engine support is on the roadmap)"
+        )
     if mode == "demo" and not DEMO_MODE_AVAILABLE:
         raise RunValidationError("Demo mode is disabled on this deployment")
     if mode == "engine":

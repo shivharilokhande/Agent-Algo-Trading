@@ -38,6 +38,7 @@ export default function NewAnalysis() {
   const [retries, setRetries] = useState("");
   const [thinking, setThinking] = useState("");
   const [checkpoint, setCheckpoint] = useState(true);
+  const [hitl, setHitl] = useState(false);
   const [presetName, setPresetName] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -125,6 +126,7 @@ export default function NewAnalysis() {
       max_tokens: maxTokens === "" ? null : parseInt(maxTokens),
       llm_max_retries: retries === "" ? null : parseInt(retries),
       checkpoint_enabled: checkpoint,
+      hitl: mode === "demo" ? hitl : false,
       ...(knob && thinking ? { [knob.key]: thinking } : {}),
     };
   }
@@ -287,6 +289,14 @@ export default function NewAnalysis() {
             <input type="checkbox" id="ckpt" checked={checkpoint} onChange={(e) => setCheckpoint(e.target.checked)} />
             <label htmlFor="ckpt" style={{ margin: 0, color: "var(--text)" }}>Checkpoint / resume enabled</label>
           </div>
+          {mode === "demo" && (
+            <div className="checkbox-row" style={{ marginTop: 18 }}>
+              <input type="checkbox" id="hitl" checked={hitl} onChange={(e) => setHitl(e.target.checked)} />
+              <label htmlFor="hitl" style={{ margin: 0, color: "var(--text)" }}>
+                Pause before final decision <span className="muted">— interrogate agents & inject your view</span>
+              </label>
+            </div>
+          )}
         </div>
 
         <p style={{ marginBottom: 0 }}>

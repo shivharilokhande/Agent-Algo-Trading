@@ -52,6 +52,11 @@ class RunHandle:
         self.subscribers: list[asyncio.Queue] = []
         self.seq = 0
         self.task: asyncio.Task | None = None
+        # P3-A5 human-in-the-loop
+        self.paused = False
+        self.resume_event = asyncio.Event()
+        self.injected_view = ""
+        self.qa_count = 0
 
 
 class RunManager:
@@ -97,6 +102,54 @@ class RunManager:
             ids = list(self._handles.keys())
             rows = db.query(Run.id).filter(Run.user_id == user_id, Run.id.in_(ids)).all()
             return len(rows)
+
+    # ---------- P3-A5 human-in-the-loop ----------
+
+    async def wait_for_proceed(self, handle: RunHandle) -> str:
+        """Demo-runner helper: mark paused, wait for the user's proceed, return their view."""
+        with SessionLocal() as db:
+            run = db.get(Run, handle.run_id)
+            run.status = "paused"
+            db.commit()
+        handle.paused = True
+        await self.emit(handle, "run_status", payload={"status": "paused"})
+        try:
+            while not handle.resume_event.is_set():
+                if handle.cancel_event.is_set():
+                    raise RunCancelled()
+                await asyncio.sleep(0.3)
+        finally:
+            handle.paused = False
+        with SessionLocal() as db:
+            run = db.get(Run, handle.run_id)
+            run.status = "running"
+            db.commit()
+        await self.emit(handle, "run_status", payload={"status": "running", "resumed_from_pause": True})
+        return handle.injected_view
+
+    async def proceed(self, run_id: str, user_view: str) -> bool:
+        handle = self._handles.get(run_id)
+        if handle is None or not handle.paused:
+            return False
+        handle.injected_view = user_view.strip()
+        handle.resume_event.set()
+        return True
+
+    async def ask_paused(self, run_id: str, agent: str, question: str, answer: str) -> bool:
+        """Record a user↔agent exchange while paused (events reach the live view)."""
+        handle = self._handles.get(run_id)
+        if handle is None or not handle.paused:
+            return False
+        handle.qa_count += 1
+        await self.emit(handle, "message", agent="You",
+                        payload={"kind": "user_question", "text": f"→ {agent}: {question}"})
+        await self.emit(handle, "message", agent=agent,
+                        payload={"kind": "agent_answer", "text": answer})
+        return True
+
+    def is_paused(self, run_id: str) -> bool:
+        handle = self._handles.get(run_id)
+        return handle is not None and handle.paused
 
     # ---------- pub/sub ----------
 
@@ -235,6 +288,13 @@ class RunManager:
                 )
                 db.commit()
                 maybe_create_alert(db, run)  # P2.3
+            # P3-A2: paper-trading hook (own session; must never fail the run)
+            try:
+                from ..paper import execute_decision
+
+                await execute_decision(run_id)
+            except Exception:  # noqa: BLE001
+                log.exception("Paper execution failed for run %s", run_id)
             await self.emit(
                 handle,
                 "run_status",

@@ -35,6 +35,9 @@ _SETTING_VALIDATORS: dict[str, type | tuple] = {
     "data_vendors": dict,
     "memory_log_max_entries": int,
     "mode": str,
+    "paper_trading": bool,
+    "paper_notional": (int, float),
+    "hitl": bool,
 }
 
 

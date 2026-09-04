@@ -12,6 +12,7 @@ import Admin from "./pages/Admin";
 import Watchlists from "./pages/Watchlists";
 import Automations from "./pages/Automations";
 import Compare from "./pages/Compare";
+import Portfolio from "./pages/Portfolio";
 
 const I = {
   home: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"/></svg>,
@@ -24,6 +25,7 @@ const I = {
   list: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>,
   bolt: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>,
   bell: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" width="16" height="16" stroke="currentColor"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>,
+  wallet: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M16 15h2"/></svg>,
 };
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -49,6 +51,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     { to: "/watchlists", label: "Watchlists", icon: I.list },
     { to: "/runs", label: "Run History", icon: I.clock },
     { to: "/automations", label: "Automations", icon: I.bolt },
+    { to: "/portfolio", label: "Portfolio", icon: I.wallet },
     { to: "/memory", label: "Memory", icon: I.brain },
     { to: "/settings", label: "Settings", icon: I.gear },
   ];
@@ -126,6 +129,7 @@ export default function App() {
       <Route path="/watchlists" element={<Protected><Watchlists /></Protected>} />
       <Route path="/automations" element={<Protected><Automations /></Protected>} />
       <Route path="/compare" element={<Protected><Compare /></Protected>} />
+      <Route path="/portfolio" element={<Protected><Portfolio /></Protected>} />
       <Route path="/runs/:id" element={<Protected><RunLive /></Protected>} />
       <Route path="/memory" element={<Protected><Memory /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />

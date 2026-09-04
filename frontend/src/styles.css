@@ -130,6 +130,8 @@ button.small { padding: 5px 10px; font-size: 12px; }
 .pill.running, .pill.in_progress { background: rgba(59,111,224,.12); color: var(--blue); }
 .pill.pending, .pill.queued, .pill.untested { background: #ececea; color: #6a6e7a; }
 .pill.interrupted, .pill.cancelled { background: rgba(217,138,31,.13); color: var(--amber); }
+.pill.paused { background: rgba(59,111,224,.15); color: var(--blue); animation: pulse-text 1.6s infinite; }
+@keyframes pulse-text { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
 .pill.failed, .pill.invalid, .pill.error { background: rgba(217,44,64,.12); color: var(--red); }
 .pill.admin { background: rgba(224,43,60,.12); color: var(--accent); }
 

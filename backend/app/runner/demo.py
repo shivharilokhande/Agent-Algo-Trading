@@ -142,9 +142,25 @@ async def run_demo(
             await llm(agent, f"[Risk round {round_i+1}] {risk_lines[(round_i * 3 + idx) % len(risk_lines)]}")
             await status(agent, "done")
 
+    # ---------- P3-A5: human-in-the-loop breakpoint ----------
+    user_view = ""
+    if config.get("hitl"):
+        await mgr.emit(handle, "message", agent="Portfolio Manager", payload={
+            "kind": "system",
+            "text": "Paused before the final decision. Interrogate any agent or submit your view, then proceed.",
+        })
+        user_view = await mgr.wait_for_proceed(handle)
+
     # ---------- Stage 5: portfolio manager ----------
     rating = _final_rating(rsi, sentiment, trend, rng)
     decision = _final_decision(ticker, trade_date, rating, price, rsi, sentiment, trend, memory_ctx)
+    if user_view:
+        decision += (
+            f"\n\n**User view considered (A5.3):** “{user_view.strip()}” — the Portfolio Manager "
+            f"weighed this against the risk debate before finalizing the {rating} rating."
+        )
+    if handle.qa_count:
+        decision += f"\n\n_{handle.qa_count} user↔agent exchange(s) during the decision breakpoint are in the run log._"
     if "final_trade_decision" not in done_sections:
         await status("Portfolio Manager", "in_progress")
         await llm("Portfolio Manager", "Portfolio Manager reviewed the risk debate and issued the final decision.")

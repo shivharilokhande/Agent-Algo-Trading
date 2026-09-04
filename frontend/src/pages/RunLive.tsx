@@ -21,6 +21,54 @@ const SECTION_TITLES: Record<string, string> = {
   trader_investment_plan: "Trader Plan", final_trade_decision: "Final Decision",
 };
 
+const ASKABLE = ["Bull Researcher", "Bear Researcher", "Trader", "Aggressive Analyst", "Conservative Analyst", "Neutral Analyst"];
+
+function HitlPanel({ runId }: { runId: string }) {
+  const [agent, setAgent] = useState(ASKABLE[1]);
+  const [question, setQuestion] = useState("");
+  const [view, setView] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+
+  async function ask() {
+    setBusy("ask"); setErr("");
+    try {
+      await api.post(`/api/runs/${runId}/ask`, { agent, question: question.trim() });
+      setQuestion("");  // the exchange arrives through the live feed
+    } catch (ex: any) { setErr(ex.message); } finally { setBusy(""); }
+  }
+  async function proceed() {
+    setBusy("go"); setErr("");
+    try {
+      await api.post(`/api/runs/${runId}/proceed`, { user_view: view.trim() });
+    } catch (ex: any) { setErr(ex.message); setBusy(""); }
+  }
+
+  return (
+    <div className="card" style={{ borderColor: "var(--blue)", boxShadow: "0 0 0 1px var(--blue)" }}>
+      <h3>⏸ Decision breakpoint — the Portfolio Manager is waiting for you</h3>
+      <p className="muted">Interrogate any agent about their reasoning (answers appear in the live feed), then optionally state your own view — the final decision must address it.</p>
+      {err && <div className="error-box">{err}</div>}
+      <div className="row" style={{ marginBottom: 10 }}>
+        <select value={agent} onChange={(e) => setAgent(e.target.value)} style={{ width: 190 }}>
+          {ASKABLE.map((a) => <option key={a}>{a}</option>)}
+        </select>
+        <input placeholder="e.g. What breaks your thesis?" value={question} style={{ flex: 1, minWidth: 220 }}
+          onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && question.trim() && ask()} />
+        <button className="secondary" disabled={!question.trim() || busy === "ask"} onClick={ask}>
+          {busy === "ask" ? "…" : "Ask"}
+        </button>
+      </div>
+      <textarea rows={2} placeholder="Your view (optional) — e.g. “I already hold a position; I want a tighter stop.”"
+        value={view} onChange={(e) => setView(e.target.value)} style={{ marginBottom: 10 }} />
+      <button disabled={busy === "go"} onClick={proceed}>
+        {busy === "go" ? "Resuming…" : "▶ Proceed to final decision"}
+      </button>
+    </div>
+  );
+}
+
 export default function RunLive() {
   const { id } = useParams<{ id: string }>();
   const [run, setRun] = useState<RunOut | null>(null);
@@ -98,8 +146,8 @@ export default function RunLive() {
         setStats(msg.payload);
         break;
       case "run_status":
-        if (["done", "failed", "cancelled", "interrupted"].includes(msg.payload.status)) {
-          setFinalInfo(msg.payload);
+        if (["done", "failed", "cancelled", "interrupted", "paused", "running"].includes(msg.payload.status)) {
+          if (["done", "failed", "cancelled", "interrupted"].includes(msg.payload.status)) setFinalInfo(msg.payload);
           refreshRun();
         }
         break;
@@ -155,6 +203,8 @@ export default function RunLive() {
         )}
         <span className="muted">stream: {wsState}</span>
       </div>
+
+      {run.status === "paused" && <HitlPanel runId={run.id} />}
 
       {run.error && <div className="error-box">{run.error}</div>}
       {run.rating === "REVIEW" && (

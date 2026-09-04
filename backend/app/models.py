@@ -199,6 +199,27 @@ class Alert(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class PaperPosition(Base):
+    """P3-A2 — simulated position opened from a run's decision (paper trading)."""
+
+    __tablename__ = "paper_positions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    ticker: Mapped[str] = mapped_column(String(24), index=True)
+    rating: Mapped[str] = mapped_column(String(16))  # rating that opened it
+    qty: Mapped[float] = mapped_column(Float)
+    entry_price: Mapped[float] = mapped_column(Float)
+    notional: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(8), default="open")  # open | closed
+    exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_reason: Mapped[str] = mapped_column(String(120), default="")
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class MemoryEntry(Base):
     """Decision-log entry with pending → resolved lifecycle (F8)."""
 

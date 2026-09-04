@@ -18,6 +18,8 @@ Multi-user web platform for the [TradingAgents](https://github.com/TauricResearc
 - **Scheduled analyses** (P2) — daily / weekdays / weekly at a chosen hour (server-local), with per-schedule depth/mode
 - **Alerts** (P2) — rating-tier changes and REVIEW outcomes, with an unread bell in the top bar
 - **Run comparison** (P2) — select two runs in history for a side-by-side section diff
+- **Human-in-the-loop runs** (P3) — pause before the Portfolio Manager, interrogate any agent, inject your own view; the final decision must address it (demo mode; engine support on the roadmap)
+- **Paper trading** (P3) — decisions auto-execute into a simulated book at real market prices (Buy/Overweight open, Underweight/Sell close), live unrealized/realized P&L. **No real broker orders are ever placed.**
 - **Super-admin SaaS dashboard** — platform stats (users, runs, tokens, ratings, top tickers) and user management (promote/demote/delete). Bootstrap account: `AGENTALGO_ADMIN_EMAIL` / `AGENTALGO_ADMIN_PASSWORD` (dev default `admin@agentalgo.dev` / `admin12345` — **change in production**). Admins see a Research/Admin switch in the top bar.
 
 ## Local development (macOS/Linux)

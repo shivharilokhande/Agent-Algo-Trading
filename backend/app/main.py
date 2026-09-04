@@ -14,7 +14,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from .config import CORS_ORIGINS, DEMO_MODE_AVAILABLE
 from .db import SessionLocal, init_db
 from .models import Run
-from .routers import admin, auth, automations, catalog, keys, memory, presets, runs
+from .routers import admin, auth, automations, catalog, keys, memory, portfolio, presets, runs
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("agentalgo")
@@ -204,6 +204,7 @@ app.include_router(memory.router)
 app.include_router(presets.router)
 app.include_router(admin.router)
 app.include_router(automations.router)
+app.include_router(portfolio.router)
 
 
 @app.get("/api/health")
