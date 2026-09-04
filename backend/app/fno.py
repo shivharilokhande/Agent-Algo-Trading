@@ -381,6 +381,40 @@ def build_trade_card(snap: dict, rating: str, ticker: str) -> dict:
     return card
 
 
+_CARD_JSON_RE = None  # compiled lazily
+
+
+def extract_card_json(text: str) -> tuple[str, dict | None]:
+    """Split an LLM trade plan into (markdown, structured card).
+
+    The engine prompt asks for a fenced ```json card at the END of the plan.
+    Returns the plan with the JSON block removed, plus the parsed card (or None).
+    """
+    import json as _json
+    import re as _re
+
+    global _CARD_JSON_RE
+    if _CARD_JSON_RE is None:
+        _CARD_JSON_RE = _re.compile(r"```json\s*(\{.*?\})\s*```", _re.DOTALL)
+    matches = list(_CARD_JSON_RE.finditer(text))
+    if not matches:
+        return text, None
+    m = matches[-1]
+    try:
+        card = _json.loads(m.group(1))
+    except _json.JSONDecodeError:
+        return text, None
+    if not isinstance(card, dict) or card.get("verdict") not in ("TRADE", "NO TRADE NOW"):
+        return text, None
+    rows = card.get("rows")
+    card["rows"] = [
+        r for r in (rows if isinstance(rows, list) else [])
+        if isinstance(r, dict) and r.get("instrument") and r.get("ep") is not None
+    ][:3]
+    clean = (text[:m.start()] + text[m.end():]).strip()
+    return clean, card
+
+
 # ---------- option trade plan (deterministic; engine mode refines via LLM) ----------
 
 def build_trade_plan_md(snap: dict, rating: str, ticker: str) -> str:

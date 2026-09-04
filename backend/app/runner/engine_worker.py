@@ -262,9 +262,20 @@ def main() -> int:
             "- Give a table: instrument & expiry, entry premium (from the chain), entry trigger, "
             "stop loss (premium AND spot invalidation level), Target 1, Target 2, risk:reward "
             "for each target.\n"
-            "- If the rating is Hold/REVIEW, say 'no trade' and state exactly what change would "
-            "create one (levels to watch).\n"
-            "- End with a one-line leverage risk warning. Do not invent premiums not in the chain.\n\n"
+            "- The RATING is a research label, not an execution order: read the FINAL DECISION "
+            "text itself — if the Portfolio Manager says no new entry / hold / trim, the verdict "
+            "is NO TRADE NOW even when the rating is directional.\n"
+            "- If there is no trade now, say so and state exactly what change would create one "
+            "(levels to watch).\n"
+            "- End with a one-line leverage risk warning. Do not invent premiums not in the chain.\n"
+            "- FINALLY, append a machine-readable summary as a fenced ```json block (it is "
+            "removed before display), matching your plan EXACTLY:\n"
+            '{"verdict": "TRADE" | "NO TRADE NOW", "rows": [{"scenario": "NOW" | "IF <condition>", '
+            '"condition": str, "instrument": "e.g. NIFTY 23850 PE", "ep": number, "sl": number, '
+            '"sl_spot": str, "tp1": number, "tp2": number, "rr1": number, "rr2": number, '
+            '"primary": bool, "note": str}]}\n'
+            "For NO TRADE NOW, rows are the conditional watchlist setups (may be empty). "
+            "Premiums must come from the chain (estimated at trigger where conditional).\n\n"
             f"FINAL DECISION:\n{decision[:4000]}\n\nLIVE CHAIN:\n{cfg_in['_fno_context']}\n\n"
             f"MARKET REPORT (technicals):\n{final_state.get('market_report', '')[:3000]}"
         )
@@ -275,7 +286,27 @@ def main() -> int:
             ).content
             if isinstance(plan, list):
                 plan = " ".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in plan)
-            out({"type": "report_section", "section": "fno_trade_plan", "content_md": str(plan)})
+            # one author for plan AND card: extract the structured card the LLM appended
+            import importlib.util as _ilu
+            import pathlib as _pl
+            _spec = _ilu.spec_from_file_location(
+                "aa_fno", _pl.Path(__file__).resolve().parent.parent / "fno.py")
+            _fno = _ilu.module_from_spec(_spec)
+            try:
+                _spec.loader.exec_module(_fno)
+                plan_md, card = _fno.extract_card_json(str(plan))
+            except Exception:
+                plan_md, card = str(plan), None
+            out({"type": "report_section", "section": "fno_trade_plan", "content_md": plan_md})
+            if card:
+                card["symbol"] = cfg_in.get("_fno_symbol", ticker)
+                card["expiry"] = (cfg_in.get("_fno_snapshot") or {}).get("expiry")
+                card["spot"] = (cfg_in.get("_fno_snapshot") or {}).get("spot")
+                card["rating"] = rating
+                card["mode"] = "engine"
+                card.setdefault("generated_note", "")
+                out({"type": "report_section", "section": "fno_trade_card",
+                     "content_md": json.dumps(card)})
         except Exception as exc:  # parent applies the deterministic fallback plan
             out({"type": "message", "agent": "", "payload": {
                 "kind": "system",

@@ -309,8 +309,10 @@ class RunManager:
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("Fallback trade plan failed")
-            # 🎯 Trade Card: the one simple structured table (always deterministic)
-            if config.get("fno_mode") and config.get("_fno_snapshot"):
+            # 🎯 Trade Card — engine mode: authored by the SAME LLM as the plan (never
+            # disagreeing with it); rule-based card only as fallback / for demo runs
+            if (config.get("fno_mode") and config.get("_fno_snapshot")
+                    and "fno_trade_card" not in completed_sections(run_id)):
                 try:
                     from ..fno import build_trade_card
 

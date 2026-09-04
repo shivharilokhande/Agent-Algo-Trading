@@ -58,6 +58,28 @@ def test_directional_card_is_single_row():
     assert "23900 PE" in card_pe["rows"][0]["instrument"]  # Δ −0.461 nearest 0.40
 
 
+def test_extract_card_json():
+    from app.fno import extract_card_json
+
+    plan = ('## Option Trade Plan\n\nNo trade — PM said no new entry.\n\n'
+            '```json\n{"verdict": "NO TRADE NOW", "rows": [{"scenario": "IF BREAKS DOWN", '
+            '"condition": "Closes below 23800", "instrument": "NIFTY 23850 PE", "ep": 41, '
+            '"sl": 24.6, "sl_spot": "close above 24000", "tp1": 65.6, "tp2": 90.2, '
+            '"rr1": 1.5, "rr2": 3.0, "primary": true, "note": "after the break only"}]}\n```')
+    md, card = extract_card_json(plan)
+    assert "```json" not in md and "No trade" in md
+    assert card["verdict"] == "NO TRADE NOW" and len(card["rows"]) == 1
+    assert card["rows"][0]["instrument"] == "NIFTY 23850 PE"
+
+    # malformed / missing / bad-verdict blocks are rejected gracefully
+    assert extract_card_json("plain text plan")[1] is None
+    assert extract_card_json("x ```json\n{broken\n``` y")[1] is None
+    assert extract_card_json('```json\n{"verdict": "MAYBE", "rows": []}\n```')[1] is None
+    # rows lacking instrument/ep are dropped
+    _, c2 = extract_card_json('```json\n{"verdict": "TRADE", "rows": [{"note": "no instrument"}]}\n```')
+    assert c2["rows"] == []
+
+
 def test_fno_run_emits_trade_card(client, auth, monkeypatch):
     from app import fno
 
