@@ -1,13 +1,27 @@
 import { useEffect, useState } from "react";
 import { api, KeyOut, ProviderInfo } from "../api";
 
+// C11 — provider-specific extra credential fields (stored in the vault's `extra`)
+const EXTRA_FIELDS: Record<string, { key: string; label: string; ph: string; secret?: boolean }[]> = {
+  ollama: [{ key: "base_url", label: "Base URL", ph: "http://localhost:11434/v1" }],
+  openai_compatible: [{ key: "base_url", label: "Base URL", ph: "http://localhost:8000/v1 (vLLM) or :1234/v1 (LM Studio)" }],
+  azure: [
+    { key: "endpoint", label: "Azure endpoint", ph: "https://myresource.openai.azure.com" },
+    { key: "api_version", label: "API version", ph: "2024-06-01" },
+  ],
+  bedrock: [
+    { key: "secret_access_key", label: "AWS secret access key", ph: "", secret: true },
+    { key: "region", label: "AWS region", ph: "us-east-1" },
+  ],
+};
+
 export default function Settings() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [dataProviders, setDataProviders] = useState<ProviderInfo[]>([]);
   const [keys, setKeys] = useState<KeyOut[]>([]);
   const [editing, setEditing] = useState<string>("");
   const [secret, setSecret] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
+  const [extraForm, setExtraForm] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<{ kind: string; text: string } | null>(null);
   const [busy, setBusy] = useState("");
   const [defaults, setDefaults] = useState<any>({});
@@ -24,16 +38,17 @@ export default function Settings() {
   useEffect(() => { load(); }, []);
 
   const keyFor = (id: string) => keys.find((k) => k.provider === id);
-  const needsUrl = (p: ProviderInfo) => p.kind === "url" || p.kind === "key+url";
 
   async function save(p: ProviderInfo) {
     setBusy(p.id); setMsg(null);
     try {
       const extra: Record<string, string> = {};
-      if (needsUrl(p) && baseUrl.trim()) extra.base_url = baseUrl.trim();
+      for (const f of EXTRA_FIELDS[p.id] ?? []) {
+        if (extraForm[f.key]?.trim()) extra[f.key] = extraForm[f.key].trim();
+      }
       await api.put("/api/keys", { provider: p.id, secret, extra });
       setMsg({ kind: "ok", text: `${p.name} credential saved (encrypted at rest).` });
-      setEditing(""); setSecret(""); setBaseUrl("");
+      setEditing(""); setSecret(""); setExtraForm({});
       await load();
     } catch (ex: any) {
       setMsg({ kind: "error", text: ex.message });
@@ -78,7 +93,12 @@ export default function Settings() {
         <td>{k && <span className={`pill ${k.status}`}>{k.status}</span>}</td>
         <td>
           <div className="row">
-            <button className="secondary small" onClick={() => { setEditing(p.id); setSecret(""); setBaseUrl(k?.extra.base_url || ""); }}>
+            <button className="secondary small" onClick={() => {
+              setEditing(p.id); setSecret("");
+              const init: Record<string, string> = {};
+              for (const f of EXTRA_FIELDS[p.id] ?? []) init[f.key] = f.secret ? "" : (k?.extra[f.key] || "");
+              setExtraForm(init);
+            }}>
               {k ? "Replace" : "Add"}
             </button>
             {k && <button className="secondary small" disabled={busy === p.id} onClick={() => test(p.id)}>
@@ -89,15 +109,20 @@ export default function Settings() {
           {editing === p.id && (
             <div style={{ marginTop: 8 }}>
               {p.kind !== "url" && (
-                <input type="password" placeholder="API key / secret" value={secret}
-                  onChange={(e) => setSecret(e.target.value)} style={{ marginBottom: 6 }} />
+                <input type="password" placeholder={p.id === "bedrock" ? "AWS access key ID" : "API key / secret"}
+                  value={secret} onChange={(e) => setSecret(e.target.value)} style={{ marginBottom: 6 }} />
               )}
-              {needsUrl(p) && (
-                <input placeholder="Base URL (e.g. http://localhost:11434/v1)" value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)} style={{ marginBottom: 6 }} />
-              )}
+              {(EXTRA_FIELDS[p.id] ?? []).map((f) => (
+                <input key={f.key} type={f.secret ? "password" : "text"}
+                  placeholder={f.ph ? `${f.label} (e.g. ${f.ph})` : f.label}
+                  value={extraForm[f.key] ?? ""}
+                  onChange={(e) => setExtraForm({ ...extraForm, [f.key]: e.target.value })}
+                  style={{ marginBottom: 6 }} />
+              ))}
               <div className="row">
-                <button className="small" disabled={busy === p.id || (!secret && !baseUrl)} onClick={() => save(p)}>Save</button>
+                <button className="small"
+                  disabled={busy === p.id || (!secret && !Object.values(extraForm).some((v) => v.trim()))}
+                  onClick={() => save(p)}>Save</button>
                 <button className="secondary small" onClick={() => setEditing("")}>Cancel</button>
               </div>
             </div>

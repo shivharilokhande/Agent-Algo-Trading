@@ -68,20 +68,35 @@ def _user_env(user_id: str, llm_provider: str) -> dict[str, str]:
             if var and secret:
                 env[var] = secret
             extra = json.loads(k.extra_json or "{}")
+
+            def _safe_url(raw: str) -> str | None:
+                """M1: re-validate stored endpoints at run launch (flag may have changed)."""
+                from ..routers.keys import validate_outbound_url
+
+                try:
+                    return validate_outbound_url(raw)
+                except Exception:
+                    return None
+
             if k.provider == "ollama" and extra.get("base_url"):
-                env["OLLAMA_BASE_URL"] = extra["base_url"]
+                if url := _safe_url(extra["base_url"]):
+                    env["OLLAMA_BASE_URL"] = url
             if k.provider == "openai_compatible" and extra.get("base_url"):
-                env["TRADINGAGENTS_LLM_BACKEND_URL"] = extra["base_url"]
+                if url := _safe_url(extra["base_url"]):
+                    env["TRADINGAGENTS_LLM_BACKEND_URL"] = url
             if k.provider == "azure":
-                if extra.get("endpoint"):
-                    env["AZURE_OPENAI_ENDPOINT"] = extra["endpoint"]
+                if extra.get("endpoint") and (url := _safe_url(extra["endpoint"])):
+                    env["AZURE_OPENAI_ENDPOINT"] = url
                 if extra.get("api_version"):
                     env["AZURE_OPENAI_API_VERSION"] = extra["api_version"]
             if k.provider == "bedrock":
                 if secret:
                     env["AWS_ACCESS_KEY_ID"] = secret
-                if extra.get("secret_access_key"):
-                    env["AWS_SECRET_ACCESS_KEY"] = extra["secret_access_key"]
+                if extra.get("secret_access_key"):  # H1: stored encrypted since v1.1
+                    try:
+                        env["AWS_SECRET_ACCESS_KEY"] = decrypt_secret(extra["secret_access_key"])
+                    except Exception:  # legacy plaintext value
+                        env["AWS_SECRET_ACCESS_KEY"] = extra["secret_access_key"]
                 if extra.get("region"):
                     env["AWS_DEFAULT_REGION"] = extra["region"]
     return env
@@ -165,7 +180,11 @@ async def run_engine(
             # S8: scrub anything key-shaped before persisting the error
             import re
 
-            cause = re.sub(r"\b(sk-|key-|Bearer\s+)[A-Za-z0-9_\-\.]+", "[redacted]", cause)
+            # L1: broad key-shape redaction (OpenAI/Anthropic/Google/AWS/GitHub/Slack …)
+            cause = re.sub(
+                r"\b(sk-|key-|Bearer\s+|AIza|AKIA|ASIA|ghp_|gho_|xox[bap]-)[A-Za-z0-9_\-\./+]+",
+                "[redacted]", cause,
+            )
             raise RuntimeError(f"Engine worker failed: {cause[:500] or f'exit code {rc}'}")
         return result
     except RunCancelled:

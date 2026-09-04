@@ -6,11 +6,13 @@ export default function Runs() {
   const [runs, setRuns] = useState<RunOut[]>([]);
   const [ticker, setTicker] = useState("");
   const [status, setStatus] = useState("");
+  const [search, setSearch] = useState("");
 
   async function load() {
     const q = new URLSearchParams();
     if (ticker.trim()) q.set("ticker", ticker.trim());
     if (status) q.set("status", status);
+    if (search.trim()) q.set("q", search.trim());
     setRuns(await api.get<RunOut[]>(`/api/runs?${q}`));
   }
   useEffect(() => { load(); /* eslint-disable-line */ }, [status]);
@@ -25,8 +27,11 @@ export default function Runs() {
     <div>
       <h1>Run History</h1>
       <div className="row" style={{ marginBottom: 14 }}>
-        <input placeholder="Filter by ticker…" value={ticker} style={{ width: 180 }}
+        <input placeholder="Filter by ticker…" value={ticker} style={{ width: 160 }}
           onChange={(e) => setTicker(e.target.value.toUpperCase())}
+          onKeyDown={(e) => e.key === "Enter" && load()} />
+        <input placeholder="Search reports & decisions…" value={search} style={{ width: 230 }}
+          onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && load()} />
         <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: 160 }}>
           <option value="">All statuses</option>

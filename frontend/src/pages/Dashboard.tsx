@@ -8,8 +8,14 @@ export default function Dashboard() {
   const [pending, setPending] = useState<MemoryOut[]>([]);
   const [health, setHealth] = useState<any>(null);
   const [memStats, setMemStats] = useState<any>(null);
+  const [announcements, setAnnouncements] = useState<{ id: string; text: string }[]>([]);
 
   useEffect(() => {
+    api.get<{ id: string; text: string }[]>("/api/announcements").then((list) => {
+      setAnnouncements(list.filter((a) => {
+        try { return !localStorage.getItem(`agentalgo_dismissed_${a.id}`); } catch { return true; }
+      }));
+    }).catch(() => {});
     api.get<RunOut[]>("/api/runs?limit=100").then(setRuns).catch(() => {});
     api.get<MemoryOut[]>("/api/memory?status=pending").then(setPending).catch(() => {});
     api.get("/api/health").then(setHealth).catch(() => {});
@@ -24,6 +30,16 @@ export default function Dashboard() {
     <div>
       <h1>Dashboard</h1>
       <p className="page-sub">What your agent teams have been analyzing, and what it cost in tokens.</p>
+
+      {announcements.map((a) => (
+        <div key={a.id} className="card" style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+          <span>📣 {a.text}</span>
+          <button className="secondary small" onClick={() => {
+            try { localStorage.setItem(`agentalgo_dismissed_${a.id}`, "1"); } catch { /* ignore */ }
+            setAnnouncements(announcements.filter((x) => x.id !== a.id));
+          }}>Dismiss</button>
+        </div>
+      ))}
 
       <div className="statrow">
         <div className="statcard">

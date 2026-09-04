@@ -109,7 +109,7 @@ def toggle_admin(
 
 
 @router.delete("/users/{user_id}", status_code=204)
-def delete_user(
+async def delete_user(
     user_id: str,
     admin: Annotated[User, Depends(require_admin)],
     db: Annotated[Session, Depends(get_db)],
@@ -119,6 +119,9 @@ def delete_user(
         raise HTTPException(status_code=404, detail="User not found")
     if target.id == admin.id:
         raise HTTPException(status_code=409, detail="You cannot delete your own account here")
+    from ..runner import cancel_all_for_user
+
+    await cancel_all_for_user(user_id)  # M5: no orphaned engine subprocesses
     db.query(MemoryEntry).filter(MemoryEntry.user_id == user_id).delete()
     db.query(Preset).filter(Preset.user_id == user_id).delete()
     db.query(Setting).filter(Setting.user_id == user_id).delete()

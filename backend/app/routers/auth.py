@@ -56,12 +56,15 @@ def me(user: Annotated[User, Depends(get_current_user)]):
 
 
 @router.delete("/me", status_code=204)
-def delete_account(
+async def delete_account(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
     """F1.3 — account deletion cascades ALL user data (C1: explicit dependents)."""
     from ..models import MemoryEntry, Preset, Setting
+    from ..runner import cancel_all_for_user
+
+    await cancel_all_for_user(user.id)  # M5: no orphaned engine subprocesses
 
     db.query(MemoryEntry).filter(MemoryEntry.user_id == user.id).delete()
     db.query(Preset).filter(Preset.user_id == user.id).delete()

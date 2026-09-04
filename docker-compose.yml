@@ -7,12 +7,17 @@ services:
       - AGENTALGO_DATA_DIR=/data
       - AGENTALGO_SECRET_KEY=${AGENTALGO_SECRET_KEY:?set in .env}
       - AGENTALGO_FERNET_KEY=${AGENTALGO_FERNET_KEY:?set in .env}
+      # H2: admin bootstrap MUST be set per-deployment — no default password in prod
+      - AGENTALGO_ADMIN_EMAIL=${AGENTALGO_ADMIN_EMAIL:?set in .env}
+      - AGENTALGO_ADMIN_PASSWORD=${AGENTALGO_ADMIN_PASSWORD:?set in .env}
+      # M1: block SSRF into private networks on shared deployments
+      - AGENTALGO_ALLOW_PRIVATE_URLS=${AGENTALGO_ALLOW_PRIVATE_URLS:-false}
       - AGENTALGO_CORS_ORIGINS=${AGENTALGO_CORS_ORIGINS:-http://localhost:8080}
       - AGENTALGO_DEMO_MODE=${AGENTALGO_DEMO_MODE:-true}
     volumes:
       - agentalgo-data:/data
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"  # M4: not exposed beyond the host; nginx is the front door
     restart: unless-stopped
 
   frontend:

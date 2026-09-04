@@ -1,8 +1,13 @@
 """Super-admin dashboard tests."""
 
 
+from app.config import ADMIN_EMAIL, ADMIN_PASSWORD
+
+ADMIN = ADMIN_EMAIL.lower()
+
+
 def _admin_headers(client):
-    r = client.post("/api/auth/login", json={"email": "admin@agentalgo.dev", "password": "admin12345"})
+    r = client.post("/api/auth/login", json={"email": ADMIN, "password": ADMIN_PASSWORD})
     assert r.status_code == 200, "admin bootstrap should create the account at startup"
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
@@ -25,14 +30,14 @@ def test_admin_stats_and_users(client):
     for key in ("ratings", "top_tickers", "runs_by_status", "tokens_in", "keys_stored"):
         assert key in stats
     users = client.get("/api/admin/users", headers=h).json()
-    assert any(u["email"] == "admin@agentalgo.dev" and u["is_admin"] for u in users)
+    assert any(u["email"] == ADMIN and u["is_admin"] for u in users)
     assert all({"runs", "keys", "last_run"} <= set(u.keys()) for u in users)
 
 
 def test_admin_toggle_and_self_guard(client):
     h = _admin_headers(client)
     users = client.get("/api/admin/users", headers=h).json()
-    admin_id = next(u["id"] for u in users if u["email"] == "admin@agentalgo.dev")
+    admin_id = next(u["id"] for u in users if u["email"] == ADMIN)
     victim = next((u for u in users if not u["is_admin"]), None)
     assert victim is not None
     # promote + demote round-trip

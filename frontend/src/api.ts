@@ -51,9 +51,11 @@ export const api = {
   del: <T>(p: string) => req<T>("DELETE", p),
 };
 
-export function runStreamUrl(runId: string): string {
+// S3: mint a short-lived, run-scoped ticket so the JWT never rides a URL
+export async function runStreamUrl(runId: string): Promise<string> {
+  const { ticket } = await api.post<{ ticket: string }>(`/api/runs/${runId}/stream-ticket`);
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${window.location.host}/api/runs/${runId}/stream?token=${getToken()}`;
+  return `${proto}://${window.location.host}/api/runs/${runId}/stream?ticket=${ticket}`;
 }
 
 // ---- types ----

@@ -82,6 +82,11 @@ async def lifespan(app: FastAPI):
         from .models import User
         from .security import hash_password
 
+        if ADMIN_PASSWORD == "admin12345":  # H2: never ship the documented default
+            log.critical(
+                "SECURITY: AGENTALGO_ADMIN_PASSWORD is the documented default. "
+                "Set a real password before exposing this deployment."
+            )
         admin_user = db.query(User).filter(User.email == ADMIN_EMAIL.lower()).first()
         if admin_user is None:
             db.add(User(email=ADMIN_EMAIL.lower(),

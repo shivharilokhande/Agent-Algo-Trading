@@ -24,14 +24,21 @@ router = APIRouter(prefix="/api/keys", tags=["keys"])
 
 _KNOWN_PROVIDERS = {p["id"] for p in PROVIDERS} | {p["id"] for p in DATA_PROVIDERS}
 
+# H1: extras that are secrets — Fernet-encrypted at rest, never returned to clients
+SECRET_EXTRA_KEYS = {"secret_access_key"}
+
 
 def _to_out(k: ApiKey) -> KeyOut:
+    extra = json.loads(k.extra_json or "{}")
+    for secret_key in SECRET_EXTRA_KEYS:
+        if secret_key in extra:
+            extra[secret_key] = "•••set•••"  # presence only, never the value
     return KeyOut(
         provider=k.provider,
         mask=k.mask,
         status=k.status,
         tested_at=k.tested_at,
-        extra=json.loads(k.extra_json or "{}"),
+        extra=extra,
     )
 
 
@@ -69,7 +76,11 @@ def upsert_key(
     for url_field in ("base_url", "endpoint"):
         if body.extra.get(url_field):
             validate_outbound_url(body.extra[url_field])  # S4
-    row.extra_json = json.dumps({**json.loads(row.extra_json or "{}"), **body.extra})
+    incoming = dict(body.extra)
+    for secret_key in SECRET_EXTRA_KEYS:  # H1: encrypt secret extras like the main secret
+        if incoming.get(secret_key):
+            incoming[secret_key] = encrypt_secret(incoming[secret_key])
+    row.extra_json = json.dumps({**json.loads(row.extra_json or "{}"), **incoming})
     row.status = "untested"
     row.tested_at = None
     db.commit()

@@ -122,10 +122,19 @@ _RATE_BUCKETS: dict[str, collections.deque] = {}
 _RATE_LOCK = threading.Lock()
 
 
+_RATE_MAX_KEYS = 10_000  # M2: hard cap so attacker-controlled keys can't grow memory
+
+
 def check_rate_limit(key: str, limit: int = 10, window_seconds: int = 60) -> None:
     """Raise 429 when `key` exceeds `limit` events per window."""
     now = time.time()
     with _RATE_LOCK:
+        # sweep empty buckets and enforce the global key cap (evict oldest-inserted)
+        if len(_RATE_BUCKETS) >= _RATE_MAX_KEYS:
+            for stale in [k for k, b in _RATE_BUCKETS.items() if not b or now - b[-1] > window_seconds]:
+                del _RATE_BUCKETS[stale]
+            while len(_RATE_BUCKETS) >= _RATE_MAX_KEYS:
+                _RATE_BUCKETS.pop(next(iter(_RATE_BUCKETS)))
         bucket = _RATE_BUCKETS.setdefault(key, collections.deque())
         while bucket and now - bucket[0] > window_seconds:
             bucket.popleft()

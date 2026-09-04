@@ -43,8 +43,16 @@ export default function RunLive() {
     refreshRun();
     let closedByUs = false;
     let ended = false;
-    function connect() {
-      const ws = new WebSocket(runStreamUrl(id!));
+    async function connect() {
+      let url: string;
+      try {
+        url = await runStreamUrl(id!);  // fresh ticket per (re)connect
+      } catch {
+        setWsState("auth-failed");
+        return;
+      }
+      if (closedByUs) return;
+      const ws = new WebSocket(url);
       wsRef.current = ws;
       ws.onopen = () => setWsState("live");
       ws.onmessage = (ev) => {

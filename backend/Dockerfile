@@ -14,4 +14,5 @@ COPY backend/app ./app
 
 # IMPORTANT: single worker — RunManager state is in-process (see QUALITY_REPORT C3).
 # Scale by running multiple compose replicas with a shared external DB instead.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# M3: trust X-Forwarded-For from the nginx sidecar so rate limits see real client IPs
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips", "*"]

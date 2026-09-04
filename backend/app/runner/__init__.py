@@ -302,6 +302,20 @@ class RunManager:
 manager = RunManager()
 
 
+async def cancel_all_for_user(user_id: str, timeout: float = 6.0) -> None:
+    """M5: stop a user's in-flight runs (and their engine subprocesses) before
+    the account or its runs are deleted."""
+    with SessionLocal() as db:
+        ids = [r[0] for r in db.query(Run.id).filter(Run.user_id == user_id).all()]
+    active = [rid for rid in ids if manager.is_active(rid)]
+    for rid in active:
+        await manager.cancel(rid)
+    deadline = asyncio.get_event_loop().time() + timeout
+    while active and asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.2)
+        active = [rid for rid in active if manager.is_active(rid)]
+
+
 def completed_sections(run_id: str) -> set[str]:
     """Which report sections already exist (checkpoint semantics for resume)."""
     with SessionLocal() as db:

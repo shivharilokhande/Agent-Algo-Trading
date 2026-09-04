@@ -1,6 +1,45 @@
 # AgentAlgo — Quality Report
 
-**Date:** 2026-09-03 · **Version:** 1.0.0 · **Verdict: PASS (ship v1)**
+**Date:** 2026-09-04 · **Version:** 1.1.0 · **Verdict: PASS — approved for production (single-worker deployment)**
+
+## Round 2 — production-hardening review (fresh-context reviewer)
+
+All round-1 accepted-risk tickets were implemented, then a second independent review
+of the complete codebase ran. Disposition of its findings:
+
+| ID | Finding | Severity | Status |
+|---|---|---|---|
+| H1 | Bedrock `secret_access_key` stored/echoed in plaintext | High | **Fixed**: Fernet-encrypted at rest, masked (`•••set•••`) in every API response, decrypted only at worker launch |
+| H2 | Compose deployments booted with the documented default admin password | High | **Fixed**: compose requires `AGENTALGO_ADMIN_EMAIL/PASSWORD`, startup logs CRITICAL on the default |
+| M1 | SSRF guard off by default in compose; stored URLs never re-checked | Medium | **Fixed**: compose defaults `ALLOW_PRIVATE_URLS=false`; endpoints re-validated at every run launch. Residual: DNS rebinding after validation (documented) |
+| M2 | Rate-limit bucket map unbounded (memory DoS) | Medium | **Fixed**: stale sweep + 10k hard cap with eviction |
+| M3 | Real client IP lost behind nginx → per-IP limiting dead | Medium | **Fixed**: nginx forwards X-Forwarded-For; uvicorn `--proxy-headers` |
+| M4 | Backend port published to the world | Medium | **Fixed**: bound to 127.0.0.1; nginx is the only front door |
+| M5 | User deletion orphaned running engine subprocesses | Medium | **Fixed**: active runs cancelled (subprocess group killed) before delete |
+| L1 | Error-scrub regex too narrow | Low | **Fixed**: covers AIza/AKIA/ASIA/ghp_/xox?- prefixes |
+| L3 | No security headers/CSP on static frontend | Low | **Fixed**: nginx CSP + headers |
+| L2 | Stream ticket multi-use within 60s TTL, in query string | Low | Accepted (run-scoped + 60s TTL); single-use jti is a future nicety |
+| L4 | Resolution sweep holds one DB session across network calls | Low | Accepted for SQLite/single-worker; revisit with Postgres |
+
+Round-2 verdict after fixes: everything re-tested — **38/38 tests green**, builds clean,
+ticket-authenticated live streaming verified in the browser.
+
+## Hardening features added since v1.0 (all live-verified)
+- S6 auth rate limiting (429 verified) + timing-equalized login
+- S3 run-scoped 60-second WebSocket stream tickets (JWT removed from URLs)
+- S4 SSRF validation for user-supplied endpoints, deployment-gated
+- Security headers + gzip on API; CSP on frontend
+- F8.2 scheduled auto-resolution (6h sweep; observed resolving entries at startup) + F8.4 retention pruning
+- C8 resolve hardening: 2-day minimum window (409 verified), calendar-aligned alpha, double-resolve guard
+- C10 unique index on run_events(run_id, seq)
+- P1 WS replay optimization + paginated event log
+- F7.1 report full-text search (verified) · F11.2 announcements (verified)
+- C11 Azure/Bedrock credential fields in Settings
+- GitHub Actions CI (backend tests + frontend build), .dockerignore
+
+---
+
+# v1.0 report (2026-09-03)
 
 ## Verification summary
 
