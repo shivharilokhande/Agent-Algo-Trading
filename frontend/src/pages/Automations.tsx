@@ -127,7 +127,9 @@ export default function Automations() {
             {triggers.map((t) => (
               <tr key={t.id}>
                 <td><b>{t.ticker}</b></td>
-                <td>day move ≥ ±{t.threshold}%</td>
+                <td>{t.type === "level_below" ? `🎯 spot closes/trades below ${t.threshold} (from trade card)`
+                  : t.type === "level_above" ? `🎯 spot crosses above ${t.threshold} (from trade card)`
+                  : `day move ≥ ±${t.threshold}%`}</td>
                 <td className="muted">{t.last_fired_date || "never"}</td>
                 <td><span className={`pill ${t.enabled ? "done" : "pending"}`}>{t.enabled ? "armed" : "paused"}</span></td>
                 <td className="row">

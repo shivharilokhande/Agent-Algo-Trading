@@ -251,6 +251,80 @@ def snapshot_to_md(s: dict) -> str:
     return "\n".join(lines)
 
 
+# ---------- live spot (lightweight, for level watching) ----------
+
+_spot_cache: dict[str, tuple[float, float]] = {}
+SPOT_TTL = 60  # seconds
+
+_INDEX_NAMES = {  # NSE allIndices display names
+    "NIFTY": "NIFTY 50", "BANKNIFTY": "NIFTY BANK",
+    "FINNIFTY": "NIFTY FINANCIAL SERVICES", "MIDCPNIFTY": "NIFTY MIDCAP SELECT",
+}
+
+
+def _live_spot_sync(fno_symbol: str) -> float:
+    key = fno_symbol.upper()
+    with httpx.Client(headers=_HEADERS, timeout=15, follow_redirects=True) as client:
+        client.get(NSE_HOME)
+        if key in _INDEX_NAMES:
+            r = client.get(f"{NSE_HOME}/api/allIndices")
+            r.raise_for_status()
+            for row in (r.json() or {}).get("data", []):
+                if row.get("index") == _INDEX_NAMES[key]:
+                    return float(row["last"])
+            raise ValueError(f"{key} not in allIndices")
+        r = client.get(f"{NSE_HOME}/api/quote-equity?symbol={key}")
+        r.raise_for_status()
+        return float(((r.json() or {}).get("priceInfo") or {}).get("lastPrice"))
+
+
+async def get_live_spot(fno_symbol: str) -> float:
+    """Near-real-time NSE spot (≈1 min cache) — much lighter than the full chain."""
+    key = fno_symbol.upper()
+    now = time.time()
+    if key in _spot_cache and now - _spot_cache[key][0] < SPOT_TTL:
+        return _spot_cache[key][1]
+    spot = await asyncio.to_thread(_live_spot_sync, key)
+    _spot_cache[key] = (now, spot)
+    return spot
+
+
+def is_market_hours_ist(now=None) -> bool:
+    """NSE cash/F&O session: Mon–Fri 09:15–15:30 IST."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    ist = now or datetime.now(ZoneInfo("Asia/Kolkata"))
+    if ist.weekday() >= 5:
+        return False
+    minutes = ist.hour * 60 + ist.minute
+    return (9 * 60 + 15) <= minutes <= (15 * 60 + 30)
+
+
+def levels_from_card(card: dict) -> list[dict]:
+    """Extract watchable trigger levels from a trade card's conditional rows."""
+    import re as _re
+
+    out = []
+    for row in card.get("rows", []):
+        cond = str(row.get("condition", ""))
+        below = _re.search(r"(?:below|under|breaks?\s+down\s+(?:past|to))\s+(?:the\s+)?([\d,]{4,})", cond, _re.I)
+        above = _re.search(r"(?:above|through|reclaims?|crosses)\s+(?:the\s+)?([\d,]{4,})", cond, _re.I)
+        m = below or above
+        if not m:
+            continue
+        out.append({
+            "direction": "below" if below else "above",
+            "level": float(m.group(1).replace(",", "")),
+            "instrument": row.get("instrument", ""),
+            "ep": row.get("ep"),
+            "sl": row.get("sl"),
+            "tp1": row.get("tp1"),
+            "primary": bool(row.get("primary")),
+        })
+    return out
+
+
 def fno_symbol_for(ticker: str) -> str | None:
     """Map an AgentAlgo ticker to its NSE F&O chain symbol, if derivatives exist."""
     t = ticker.upper()

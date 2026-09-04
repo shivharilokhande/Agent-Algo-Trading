@@ -142,7 +142,8 @@ async def _trigger_loop() -> None:
             with SessionLocal() as db:
                 triggers = (
                     db.query(Trigger)
-                    .filter(Trigger.enabled.is_(True), Trigger.last_fired_date != today)
+                    .filter(Trigger.enabled.is_(True), Trigger.last_fired_date != today,
+                            Trigger.type == "price_move_pct")  # level_* has its own fast loop
                     .order_by(Trigger.last_fired_date, Trigger.created_at)  # R3-11: fair rotation
                     .limit(500).all()
                 )
@@ -170,6 +171,61 @@ async def _trigger_loop() -> None:
         except Exception:  # pragma: no cover
             log.exception("Trigger sweep failed")
         await asyncio.sleep(TRIGGER_POLL_SECONDS)
+
+
+LEVEL_WATCH_POLL_SECONDS = 120
+
+
+async def _level_watch_loop() -> None:
+    """Live trading help: watch armed card levels against near-real-time NSE spot
+    during market hours; fire a one-shot alert the moment a level breaks."""
+    from .fno import get_live_spot, is_market_hours_ist
+    from .models import Alert, Trigger
+
+    while True:
+        try:
+            if is_market_hours_ist():
+                with SessionLocal() as db:
+                    watchers = (
+                        db.query(Trigger)
+                        .filter(Trigger.enabled.is_(True),
+                                Trigger.type.in_(("level_below", "level_above")))
+                        .limit(200).all()
+                    )
+                    by_symbol: dict[str, list] = {}
+                    for t in watchers:
+                        by_symbol.setdefault(t.ticker, []).append(t)
+                    for symbol, group in by_symbol.items():
+                        try:
+                            spot = await get_live_spot(symbol)
+                        except Exception as exc:  # noqa: BLE001
+                            log.info("Level watch spot failed %s: %s", symbol, exc)
+                            continue
+                        for t in group:
+                            hit = (spot <= t.threshold if t.type == "level_below"
+                                   else spot >= t.threshold)
+                            if not hit:
+                                continue
+                            cfg = json.loads(t.config_json or "{}")
+                            arrow = "↓" if t.type == "level_below" else "↑"
+                            inst = cfg.get("instrument", "")
+                            detail = (f" → setup live: {inst}, est entry ₹{cfg.get('ep')}, "
+                                      f"SL ₹{cfg.get('sl')}, T1 ₹{cfg.get('tp1')}"
+                                      if inst else "")
+                            db.add(Alert(
+                                user_id=t.user_id, run_id=cfg.get("run_id"),
+                                ticker=t.ticker, type="level_hit",
+                                message=(f"🎯 LEVEL HIT: {symbol} at {spot} crossed "
+                                         f"{t.threshold:g} {arrow}{detail}. Re-check the live "
+                                         "chain before entering — premium estimates age fast."),
+                            ))
+                            t.enabled = False  # one-shot
+                            t.last_fired_date = date.today().isoformat()
+                            log.info("LEVEL HIT %s %s %s (spot %s)", symbol, t.type, t.threshold, spot)
+                    db.commit()
+        except Exception:  # pragma: no cover
+            log.exception("Level watch sweep failed")
+        await asyncio.sleep(LEVEL_WATCH_POLL_SECONDS)
 
 
 @asynccontextmanager
@@ -206,6 +262,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_auto_resolution_loop()),
         asyncio.create_task(_schedule_loop()),
         asyncio.create_task(_trigger_loop()),
+        asyncio.create_task(_level_watch_loop()),
     ]
     yield
     for job in jobs:

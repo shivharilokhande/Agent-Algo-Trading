@@ -322,6 +322,13 @@ class RunManager:
                     await self.save_report(handle, "fno_trade_card", json.dumps(card))
                 except Exception:  # noqa: BLE001
                     log.exception("Trade card failed")
+            # Level Watch: arm one-shot level triggers from the card (engine runs only —
+            # demo verdicts must never arm live alerts)
+            if config.get("fno_mode") and mode == "engine":
+                try:
+                    arm_level_watch(run_id, user_id, config.get("_fno_symbol", ticker))
+                except Exception:  # noqa: BLE001
+                    log.exception("Level watch arming failed")
 
             with SessionLocal() as db:
                 run = db.get(Run, run_id)
@@ -419,6 +426,44 @@ class RunManager:
 
 
 manager = RunManager()
+
+
+def arm_level_watch(run_id: str, user_id: str, fno_symbol: str) -> int:
+    """Create one-shot level triggers from a completed run's trade card (Level Watch)."""
+    import json as _json
+
+    from ..fno import levels_from_card
+    from ..models import RunReport, Trigger
+
+    with SessionLocal() as db:
+        row = (db.query(RunReport)
+               .filter(RunReport.run_id == run_id, RunReport.section == "fno_trade_card")
+               .one_or_none())
+        if row is None:
+            return 0
+        levels = levels_from_card(_json.loads(row.content_md))
+        armed = 0
+        for lv in levels:
+            dup = (db.query(Trigger)
+                   .filter(Trigger.user_id == user_id, Trigger.ticker == fno_symbol,
+                           Trigger.type == f"level_{lv['direction']}",
+                           Trigger.threshold == lv["level"], Trigger.enabled.is_(True))
+                   .first())
+            if dup:
+                continue
+            db.add(Trigger(
+                user_id=user_id, ticker=fno_symbol, type=f"level_{lv['direction']}",
+                threshold=lv["level"],
+                config_json=_json.dumps({"source": "trade_card", "run_id": run_id,
+                                         "instrument": lv["instrument"], "ep": lv["ep"],
+                                         "sl": lv["sl"], "tp1": lv["tp1"],
+                                         "primary": lv["primary"]}),
+            ))
+            armed += 1
+        db.commit()
+        if armed:
+            log.info("Level Watch armed %d trigger(s) for %s", armed, fno_symbol)
+        return armed
 
 
 def maybe_create_alert(db, run: Run) -> None:
