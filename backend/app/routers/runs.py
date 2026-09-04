@@ -218,10 +218,10 @@ def delete_run(
     run = _owned_run(run_id, user, db)
     if manager.is_active(run_id):
         raise HTTPException(status_code=409, detail="Cancel the run before deleting it")
-    # C1: detach memory entries referencing this run before delete (FK is enforced)
-    from ..models import MemoryEntry
+    # C1: detach all soft references (memory, alerts, paper positions) before delete
+    from ..services import detach_run_references
 
-    db.query(MemoryEntry).filter(MemoryEntry.run_id == run_id).update({"run_id": None})
+    detach_run_references(db, run_id)
     db.delete(run)
     db.commit()
 

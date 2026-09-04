@@ -61,13 +61,10 @@ async def delete_account(
     db: Annotated[Session, Depends(get_db)],
 ):
     """F1.3 — account deletion cascades ALL user data (C1: explicit dependents)."""
-    from ..models import MemoryEntry, Preset, Setting
     from ..runner import cancel_all_for_user
+    from ..services import purge_user_data
 
     await cancel_all_for_user(user.id)  # M5: no orphaned engine subprocesses
-
-    db.query(MemoryEntry).filter(MemoryEntry.user_id == user.id).delete()
-    db.query(Preset).filter(Preset.user_id == user.id).delete()
-    db.query(Setting).filter(Setting.user_id == user.id).delete()
+    purge_user_data(db, user.id)
     db.delete(db.get(User, user.id))  # runs/events/reports/keys via ORM cascades
     db.commit()

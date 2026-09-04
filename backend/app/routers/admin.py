@@ -120,10 +120,9 @@ async def delete_user(
     if target.id == admin.id:
         raise HTTPException(status_code=409, detail="You cannot delete your own account here")
     from ..runner import cancel_all_for_user
+    from ..services import purge_user_data
 
     await cancel_all_for_user(user_id)  # M5: no orphaned engine subprocesses
-    db.query(MemoryEntry).filter(MemoryEntry.user_id == user_id).delete()
-    db.query(Preset).filter(Preset.user_id == user_id).delete()
-    db.query(Setting).filter(Setting.user_id == user_id).delete()
+    purge_user_data(db, user_id)
     db.delete(target)
     db.commit()

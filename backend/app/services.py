@@ -21,6 +21,36 @@ class RunValidationError(ValueError):
     pass
 
 
+def detach_run_references(db: Session, run_id: str) -> None:
+    """Null out soft references so a run can be deleted under FK enforcement."""
+    from .models import Alert, MemoryEntry, PaperPosition
+
+    for model in (MemoryEntry, Alert, PaperPosition):
+        db.query(model).filter(model.run_id == run_id).update({"run_id": None})
+
+
+def purge_user_data(db: Session, user_id: str) -> None:
+    """Delete every row belonging to a user that lacks an ORM cascade.
+
+    Runs/events/reports/keys cascade from User; everything else is explicit so
+    account deletion can never 500 on a foreign key (C1 family).
+    """
+    from .models import (
+        AgentProfile, Alert, Document, Ensemble, MemoryEntry, PaperPosition,
+        Preset, Schedule, Setting, Trigger, Watchlist,
+    )
+    from sqlalchemy import text as sql
+
+    # drop FTS rows for the user's documents first
+    doc_ids = [d[0] for d in db.query(Document.id).filter(Document.user_id == user_id).all()]
+    if doc_ids:
+        placeholders = ",".join(f"'{i}'" for i in doc_ids)
+        db.execute(sql(f"DELETE FROM documents_fts WHERE doc_id IN ({placeholders})"))
+    for model in (Alert, PaperPosition, MemoryEntry, Preset, Setting, Watchlist,
+                  Schedule, Trigger, AgentProfile, Document, Ensemble):
+        db.query(model).filter(model.user_id == user_id).delete()
+
+
 def build_run(db: Session, user_id: str, cfg: dict) -> Run:
     """Validate config and persist a Run row (status=queued). Raises RunValidationError."""
     try:

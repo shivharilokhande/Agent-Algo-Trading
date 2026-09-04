@@ -20,6 +20,10 @@ Multi-user web platform for the [TradingAgents](https://github.com/TauricResearc
 - **Run comparison** (P2) — select two runs in history for a side-by-side section diff
 - **Human-in-the-loop runs** (P3) — pause before the Portfolio Manager, interrogate any agent, inject your own view; the final decision must address it (demo mode; engine support on the roadmap)
 - **Paper trading** (P3) — decisions auto-execute into a simulated book at real market prices (Buy/Overweight open, Underweight/Sell close), live unrealized/realized P&L. **No real broker orders are ever placed.**
+- **Ensemble & arbitration** (P4) — one analysis across 2–3 model stacks in parallel; a meta-judge rules unanimous/majority/split and surfaces dissent; provider scoreboard ranks stacks by realized alpha
+- **Event-driven triggers** (P4) — price-move triggers (±N% day move, checked every 10 min) fire analyses and alerts automatically
+- **Agent Studio** (P4) — override any agent's persona or add custom analysts (name, mandate, tool selection) to the pipeline (demo runner today; engine prompt overrides roadmapped)
+- **Research library** (P4) — ingest real SEC EDGAR 10-K/10-Q filings + index your reports; FTS5 full-text search with BM25 snippets; analyses cite matching passages with point-in-time filtering
 - **Super-admin SaaS dashboard** — platform stats (users, runs, tokens, ratings, top tickers) and user management (promote/demote/delete). Bootstrap account: `AGENTALGO_ADMIN_EMAIL` / `AGENTALGO_ADMIN_PASSWORD` (dev default `admin@agentalgo.dev` / `admin12345` — **change in production**). Admins see a Research/Admin switch in the top bar.
 
 ## Local development (macOS/Linux)
