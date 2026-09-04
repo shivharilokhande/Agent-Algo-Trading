@@ -78,10 +78,23 @@ function TradeCard({ card }: { card: any }) {
     <div className="card" style={{ borderColor: noTrade ? "var(--amber)" : "var(--green)", borderWidth: 2 }}>
       <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
         <h3 style={{ margin: 0 }}>🎯 Trade Card — {card.symbol} <span className="muted">(expiry {card.expiry} · spot {card.spot})</span></h3>
-        <span className={`pill ${noTrade ? "interrupted" : "done"}`} style={{ fontSize: 14, padding: "6px 14px" }}>
-          {card.verdict}
-        </span>
+        <div className="row">
+          {card.mode === "demo" && (
+            <span className="pill failed" style={{ fontSize: 13, padding: "6px 12px" }}>
+              ⚠ SIMULATED — demo verdict, not a real signal
+            </span>
+          )}
+          <span className={`pill ${noTrade ? "interrupted" : "done"}`} style={{ fontSize: 14, padding: "6px 14px" }}>
+            {card.verdict}
+          </span>
+        </div>
       </div>
+      {card.mode === "demo" && (
+        <p style={{ color: "var(--red)", marginTop: 4 }}>
+          This verdict came from <b>simulated agents</b> (demo mode) — only the chain data is real.
+          Use a <b>Live engine</b> run from the F&O Desk for a real signal.
+        </p>
+      )}
       {card.generated_note && <p className="muted" style={{ marginTop: 4 }}>{card.generated_note}</p>}
       {card.rows.length > 0 && (
         <table>

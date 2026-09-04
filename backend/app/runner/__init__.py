@@ -316,6 +316,7 @@ class RunManager:
 
                     card = build_trade_card(config["_fno_snapshot"],
                                             result.get("rating") or "REVIEW", ticker)
+                    card["mode"] = mode  # demo cards get a SIMULATED watermark in the UI
                     await self.save_report(handle, "fno_trade_card", json.dumps(card))
                 except Exception:  # noqa: BLE001
                     log.exception("Trade card failed")
