@@ -9,5 +9,7 @@
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "",
     "ANTHROPIC_SMALL_FAST_MODEL": "",
     "CLAUDE_CODE_SUBAGENT_MODEL": ""
-  }
+  },
+  "hooks": {},
+  "enabledPlugins": {}
 }

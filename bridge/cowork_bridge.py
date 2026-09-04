@@ -141,14 +141,22 @@ def _extract_json(text: str) -> dict | None:
     return None
 
 
+TOKEN_FILE = BRIDGE_DIR / ".cowork_token"  # optional: output of `claude setup-token`
+
+
 async def _call_claude(prompt: str, model: str) -> str:
     """One `claude -p` invocation on the user's subscription."""
+    # keep the FULL environment (hooks/plugins may need node etc.) minus
+    # Claude-session and Anthropic-redirection variables
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(("CLAUDE", "ANTHROPIC", "CLAUDECODE"))}
-    env["PATH"] = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
-    env["HOME"] = os.environ.get("HOME", str(Path.home()))
     # neutralize any global redirection (Ollama/OpenRouter overrides in ~/.claude)
     env.update({"ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": "", "ANTHROPIC_API_KEY": ""})
+    # long-lived subscription token from `claude setup-token`, if provided
+    if TOKEN_FILE.exists():
+        token = TOKEN_FILE.read_text().strip()
+        if token:
+            env["ANTHROPIC_AUTH_TOKEN"] = token
 
     proc = await asyncio.create_subprocess_exec(
         CLAUDE_BIN, "-p", "--output-format", "json", "--max-turns", "1",
