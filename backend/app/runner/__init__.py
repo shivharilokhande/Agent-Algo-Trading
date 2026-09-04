@@ -309,6 +309,16 @@ class RunManager:
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("Fallback trade plan failed")
+            # 🎯 Trade Card: the one simple structured table (always deterministic)
+            if config.get("fno_mode") and config.get("_fno_snapshot"):
+                try:
+                    from ..fno import build_trade_card
+
+                    card = build_trade_card(config["_fno_snapshot"],
+                                            result.get("rating") or "REVIEW", ticker)
+                    await self.save_report(handle, "fno_trade_card", json.dumps(card))
+                except Exception:  # noqa: BLE001
+                    log.exception("Trade card failed")
 
             with SessionLocal() as db:
                 run = db.get(Run, run_id)

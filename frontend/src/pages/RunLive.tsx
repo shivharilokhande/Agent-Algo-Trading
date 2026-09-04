@@ -72,12 +72,55 @@ function HitlPanel({ runId }: { runId: string }) {
   );
 }
 
+function TradeCard({ card }: { card: any }) {
+  const noTrade = card.verdict !== "TRADE";
+  return (
+    <div className="card" style={{ borderColor: noTrade ? "var(--amber)" : "var(--green)", borderWidth: 2 }}>
+      <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
+        <h3 style={{ margin: 0 }}>🎯 Trade Card — {card.symbol} <span className="muted">(expiry {card.expiry} · spot {card.spot})</span></h3>
+        <span className={`pill ${noTrade ? "interrupted" : "done"}`} style={{ fontSize: 14, padding: "6px 14px" }}>
+          {card.verdict}
+        </span>
+      </div>
+      {card.generated_note && <p className="muted" style={{ marginTop: 4 }}>{card.generated_note}</p>}
+      {card.rows.length > 0 && (
+        <table>
+          <thead>
+            <tr><th>When</th><th>Buy</th><th>Entry (EP)</th><th>Stop Loss</th><th>Target 1</th><th>Target 2</th><th>R:R</th></tr>
+          </thead>
+          <tbody>
+            {card.rows.map((r: any, i: number) => (
+              <tr key={i} style={{ background: r.primary ? "rgba(30,158,111,.05)" : undefined }}>
+                <td>
+                  <b>{r.scenario}</b> {r.primary && <span className="pill done" style={{ marginLeft: 4 }}>PRIMARY</span>}
+                  <div className="muted" style={{ fontSize: 12 }}>{r.condition}</div>
+                </td>
+                <td><b>{r.instrument}</b><div className="muted" style={{ fontSize: 11 }}>{r.note}</div></td>
+                <td className="mono">≈ ₹{r.ep}</td>
+                <td className="mono">₹{r.sl}<div className="muted" style={{ fontSize: 11 }}>or {r.sl_spot}</div></td>
+                <td className="mono" style={{ color: "var(--green)" }}>₹{r.tp1}</td>
+                <td className="mono" style={{ color: "var(--green)" }}>₹{r.tp2}</td>
+                <td className="mono">1:{r.rr1} / 1:{r.rr2}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p className="disclaimer" style={{ padding: 0, marginTop: 8 }}>
+        Take at most one row, only when its condition is met on a closing basis. Premiums are estimates at trigger —
+        re-check the live chain. Research, not advice · lot sizes & margins per your broker.
+      </p>
+    </div>
+  );
+}
+
 export default function RunLive() {
   const { id } = useParams<{ id: string }>();
   const [run, setRun] = useState<RunOut | null>(null);
   const [agentStatus, setAgentStatus] = useState<Record<string, string>>({});
   const [feed, setFeed] = useState<RunEventMsg[]>([]);
   const [sections, setSections] = useState<Record<string, string>>({});
+  const [tradeCard, setTradeCard] = useState<any>(null);
   const [stats, setStats] = useState<Record<string, number>>({});
   const [finalInfo, setFinalInfo] = useState<any>(null);
   const [tab, setTab] = useState("feed");
@@ -143,6 +186,10 @@ export default function RunLive() {
         setFeed((f) => (f.length > 400 ? [...f.slice(-350), msg] : [...f, msg]));
         break;
       case "report_section":
+        if (msg.payload.section === "fno_trade_card") {
+          try { setTradeCard(JSON.parse(msg.payload.content_md)); } catch { /* ignore */ }
+          break;
+        }
         setSections((s) => ({ ...s, [msg.payload.section]: msg.payload.content_md }));
         break;
       case "stats":
@@ -206,6 +253,8 @@ export default function RunLive() {
         )}
         <span className="muted">stream: {wsState}</span>
       </div>
+
+      {tradeCard && <TradeCard card={tradeCard} />}
 
       {run.status === "paused" && <HitlPanel runId={run.id} />}
 

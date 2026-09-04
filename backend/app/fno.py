@@ -267,6 +267,120 @@ def fno_symbol_for(ticker: str) -> str | None:
     return None
 
 
+# ---------- trade card: the one simple table (structured, UI-rendered) ----------
+
+def _ladder_leg(ladder: list[dict], strike: float, side: str) -> dict | None:
+    for r in ladder:
+        if r["strike"] == strike:
+            return r
+    return None
+
+
+def _nearest_strike(ladder: list[dict], target: float) -> float | None:
+    if not ladder:
+        return None
+    return min((r["strike"] for r in ladder), key=lambda k: abs(k - target))
+
+
+def _card_row(scenario: str, condition: str, instrument: str, ep: float,
+              note: str, primary: bool, sl_spot: str) -> dict:
+    sl = round(ep * 0.60, 2)
+    tp1 = round(ep * 1.60, 2)
+    tp2 = round(ep * 2.20, 2)
+    risk = ep - sl
+    return {
+        "scenario": scenario, "condition": condition, "instrument": instrument,
+        "ep": round(ep, 2), "sl": sl, "sl_spot": sl_spot, "tp1": tp1, "tp2": tp2,
+        "rr1": round((tp1 - ep) / risk, 1) if risk else None,
+        "rr2": round((tp2 - ep) / risk, 1) if risk else None,
+        "primary": primary, "note": note,
+    }
+
+
+def build_trade_card(snap: dict, rating: str, ticker: str) -> dict:
+    """Structured card: verdict + at-most-two plain rows. The UI renders this
+    as the simple table; the prose plan stays in its own tab for the why."""
+    spot = snap.get("spot")
+    ladder = snap.get("atm_ladder") or []
+    symbol = snap.get("symbol", ticker)
+    expiry = snap.get("expiry")
+    bullish = rating in ("Buy", "Overweight")
+    bearish = rating in ("Sell", "Underweight")
+    card: dict = {"symbol": symbol, "expiry": expiry, "spot": spot, "rating": rating,
+                  "rows": [], "generated_note": ""}
+    if not (spot and ladder):
+        card["verdict"] = "NO DATA"
+        return card
+
+    step = round(min(abs(ladder[i + 1]["strike"] - ladder[i]["strike"])
+                     for i in range(len(ladder) - 1))) if len(ladder) > 1 else 50
+    support = [s["strike"] for s in (snap.get("support_strikes") or [])][:2]
+    resistance = [s["strike"] for s in (snap.get("resistance_strikes") or [])][:2]
+    # bear trigger: below BOTH nearby put walls; bull trigger: reclaim of the
+    # single heaviest call wall plus one strike step (the report's 24,000→24,050 logic)
+    bear_trigger = min(support) if support else spot - 2 * step
+    bull_trigger = (resistance[0] if resistance else spot) + step
+
+    def estimate_ep(strike: float, side: str, trigger: float) -> float | None:
+        leg = _ladder_leg(ladder, strike, side)
+        if leg is None:
+            return None
+        ltp = leg["ce_ltp" if side == "CE" else "pe_ltp"]
+        delta = leg.get("ce_delta" if side == "CE" else "pe_delta") or 0.35
+        if not ltp:
+            return None
+        return max(ltp + abs(delta) * abs(trigger - spot), ltp)
+
+    if bullish or bearish:
+        # directional verdict → trade in that direction now, on strength
+        target_delta = 0.40
+        dkey, pkey = ("ce_delta", "ce_ltp") if bullish else ("pe_delta", "pe_ltp")
+        candidates = [r for r in ladder if (r.get(pkey) or 0) > 0 and r.get(dkey) is not None]
+        leg = min(candidates, key=lambda r: abs(abs(r[dkey]) - target_delta), default=None)
+        if leg:
+            side = "CE" if bullish else "PE"
+            wall = support[0] if bullish and support else (resistance[0] if resistance else None)
+            card["verdict"] = "TRADE"
+            card["rows"].append(_card_row(
+                "NOW", f"Pipeline is {rating} — enter on strength, not into a fade",
+                f"{symbol} {leg['strike']} {side}", leg[pkey],
+                f"Δ {leg[dkey]} · IV {leg['ce_iv' if bullish else 'pe_iv']}%", True,
+                f"close {'below' if bullish else 'above'} {wall}" if wall else "—",
+            ))
+        else:
+            card["verdict"] = "NO TRADE NOW"
+        return card
+
+    # Hold / REVIEW → the two-trigger bracket
+    card["verdict"] = "NO TRADE NOW"
+    card["generated_note"] = (
+        f"{symbol} is boxed between the {min(support) if support else '—'} put wall and the "
+        f"{max(resistance) if resistance else '—'} call wall. Take AT MOST ONE of the rows "
+        "below — whichever level breaks first on a closing basis. Until then, sit out."
+    )
+    pe_strike = _nearest_strike(ladder, bear_trigger)
+    ce_strike = _nearest_strike(ladder, bull_trigger)
+    if pe_strike:
+        ep = estimate_ep(pe_strike, "PE", bear_trigger)
+        if ep:
+            card["rows"].append(_card_row(
+                "IF BREAKS DOWN", f"Closes below {bear_trigger}",
+                f"{symbol} {pe_strike} PE", ep,
+                "Primary — goes with the trend; puts are cheaper (IV)", True,
+                f"close back above {support[0] if support else bear_trigger + step}",
+            ))
+    if ce_strike:
+        ep = estimate_ep(ce_strike, "CE", bull_trigger)
+        if ep:
+            card["rows"].append(_card_row(
+                "IF BREAKS UP", f"Closes above {bull_trigger}",
+                f"{symbol} {ce_strike} CE", ep,
+                "Counter-trend — defensive branch", False,
+                f"close back below {resistance[0] if resistance else bull_trigger - step}",
+            ))
+    return card
+
+
 # ---------- option trade plan (deterministic; engine mode refines via LLM) ----------
 
 def build_trade_plan_md(snap: dict, rating: str, ticker: str) -> str:
