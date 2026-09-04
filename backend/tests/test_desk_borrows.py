@@ -29,9 +29,12 @@ def test_size_position_math():
 def test_enrich_card_sizing():
     from app.fno import enrich_card_sizing
 
-    card = {"symbol": "NIFTY", "rows": [{"ep": 75.8, "sl": 45.5}]}
+    card = {"symbol": "NIFTY", "rows": [{"ep": 75.8, "sl": 45.5, "tp1": 121.3, "tp2": 166.8}]}
     out = enrich_card_sizing(card, {"trading_capital": 500_000, "risk_per_trade_pct": 1.0})
     assert out["rows"][0]["sizing"]["lots"] == 2
+    # ₹ profit at targets: (tp − ep) × lot 65 × 2 lots
+    assert out["rows"][0]["sizing"]["profit_t1"] == round((121.3 - 75.8) * 65 * 2, 2)
+    assert out["rows"][0]["sizing"]["profit_t2"] == round((166.8 - 75.8) * 65 * 2, 2)
     assert out["sizing_basis"]["lot_size"] == 65  # NIFTY default (Jan-2026 series)
     # lot override via settings
     out2 = enrich_card_sizing({"symbol": "NIFTY", "rows": [{"ep": 10, "sl": 6}]},

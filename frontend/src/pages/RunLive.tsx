@@ -122,6 +122,12 @@ function TradeCard({ card }: { card: any }) {
                           <b>{r.sizing.lots} lot{r.sizing.lots > 1 ? "s" : ""}</b> × {r.sizing.lot_size}
                           <div className="muted">outlay ₹{Number(r.sizing.premium_outlay).toLocaleString("en-IN")} ({r.sizing.outlay_pct}%)</div>
                           <div style={{ color: "var(--red)" }}>max loss ₹{Number(r.sizing.max_loss).toLocaleString("en-IN")}</div>
+                          {r.sizing.profit_t1 && (
+                            <div style={{ color: "var(--green)" }}>
+                              profit ₹{Number(r.sizing.profit_t1).toLocaleString("en-IN")} @T1
+                              {r.sizing.profit_t2 ? ` · ₹${Number(r.sizing.profit_t2).toLocaleString("en-IN")} @T2` : ""}
+                            </div>
+                          )}
                         </div>
                       ) : <span className="pill failed" style={{ fontSize: 11 }}>0 lots — risk/lot &gt; budget</span>
                     ) : <span className="muted" style={{ fontSize: 11 }}>{r.sizing.note}</span>

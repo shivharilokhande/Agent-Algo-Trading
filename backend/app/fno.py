@@ -508,7 +508,14 @@ def enrich_card_sizing(card: dict, settings_cfg: dict) -> dict:
     for row in card.get("rows", []):
         ep, sl = row.get("ep"), row.get("sl")
         if ep and sl and ep > sl:
-            row["sizing"] = size_position(float(ep), float(sl), lot, capital, risk_pct)
+            sizing = size_position(float(ep), float(sl), lot, capital, risk_pct)
+            # ₹ profit at each target for the sized position (long option: (target−entry)×lot×lots)
+            lots = sizing.get("lots") or 0
+            if lots and lot:
+                for key, tgt in (("profit_t1", row.get("tp1")), ("profit_t2", row.get("tp2"))):
+                    if tgt and float(tgt) > float(ep):
+                        sizing[key] = round((float(tgt) - float(ep)) * lot * lots, 2)
+            row["sizing"] = sizing
     card["sizing_basis"] = {"capital": capital, "risk_pct": risk_pct, "lot_size": lot,
                             "lot_note": "verify current NSE lot size with your broker"}
     return card
