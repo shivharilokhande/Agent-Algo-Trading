@@ -157,10 +157,13 @@ def export_markdown(
     rows = {r.section: r.content_md for r in db.query(RunReport).filter(RunReport.run_id == run_id)}
     parts = [f"# {run.ticker} — {run.trade_date}\n\nRating: **{run.rating or 'n/a'}** · Mode: {run.mode} · Benchmark: {run.benchmark}\n"]
     groups = [
-        ("I. Analyst Team Reports", ["market_report", "sentiment_report", "news_report", "fundamentals_report"]),
+        ("0. F&O / Derivatives Snapshot", ["derivatives_report"]),
+        ("I. Analyst Team Reports", ["market_report", "sentiment_report", "news_report",
+                                     "fundamentals_report", "custom_report"]),
         ("II. Research Team Decision", ["investment_plan"]),
         ("III. Trading Team Plan", ["trader_investment_plan"]),
         ("IV & V. Risk Management and Portfolio Manager Decision", ["final_trade_decision"]),
+        ("VI. Option Trade Plan", ["fno_trade_plan"]),
     ]
     for title, sections in groups:
         content = [rows[s] for s in sections if s in rows]
