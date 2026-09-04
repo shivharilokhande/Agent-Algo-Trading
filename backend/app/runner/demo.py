@@ -205,6 +205,13 @@ async def run_demo(
         await mgr.save_report(handle, "final_trade_decision", decision)
         await status("Portfolio Manager", "done")
 
+    # F&O Desk: translate the verdict into an option trade plan (real chain data)
+    if config.get("fno_mode") and config.get("_fno_snapshot"):
+        from ..fno import build_trade_plan_md
+
+        plan = build_trade_plan_md(config["_fno_snapshot"], rating, ticker)
+        await mgr.save_report(handle, "fno_trade_plan", plan)
+
     summary = f"{rating} — demo-mode analysis of {ticker} on {trade_date} (simulated data)."
     return {"rating": rating, "decision_summary": summary, "stats": stats}
 

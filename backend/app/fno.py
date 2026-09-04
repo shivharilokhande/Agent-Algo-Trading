@@ -69,6 +69,7 @@ def analyze_chain(records: dict, symbol: str) -> dict:
             "ce_oi": ce.get("openInterest", 0), "pe_oi": pe.get("openInterest", 0),
             "ce_chg": ce.get("changeinOpenInterest", 0), "pe_chg": pe.get("changeinOpenInterest", 0),
             "ce_iv": ce.get("impliedVolatility", 0), "pe_iv": pe.get("impliedVolatility", 0),
+            "ce_ltp": ce.get("lastPrice", 0), "pe_ltp": pe.get("lastPrice", 0),
         })
     strikes = [s for s in strikes if s["strike"]]
     total_ce = sum(s["ce_oi"] for s in strikes)
@@ -77,7 +78,15 @@ def analyze_chain(records: dict, symbol: str) -> dict:
     resistance = sorted(strikes, key=lambda s: -s["ce_oi"])[:3]
     support = sorted(strikes, key=lambda s: -s["pe_oi"])[:3]
     atm = min(strikes, key=lambda s: abs(s["strike"] - spot)) if (spot and strikes) else None
+    # nearest-ATM ladder with live premiums — the raw material for trade plans
+    near_atm = sorted(strikes, key=lambda s: abs(s["strike"] - (spot or 0)))[:7]
+    near_atm = sorted(near_atm, key=lambda s: s["strike"])
     return {
+        "atm_ladder": [
+            {"strike": s["strike"], "ce_ltp": s["ce_ltp"], "pe_ltp": s["pe_ltp"],
+             "ce_oi": s["ce_oi"], "pe_oi": s["pe_oi"], "ce_iv": s["ce_iv"], "pe_iv": s["pe_iv"]}
+            for s in near_atm
+        ],
         "symbol": symbol,
         "spot": spot,
         "expiry": expiry,
@@ -160,6 +169,12 @@ def snapshot_to_md(s: dict) -> str:
     ]
     if vix is not None:
         lines.append(f"- **India VIX:** {vix}")
+    ladder = s.get("atm_ladder") or []
+    if ladder:
+        lines += ["", "| Strike | CE premium | PE premium | CE OI | PE OI |", "|---|---|---|---|---|"]
+        for row in ladder:
+            lines.append(f"| {row['strike']} | ₹{row['ce_ltp']} | ₹{row['pe_ltp']} "
+                         f"| {row['ce_oi']:,} | {row['pe_oi']:,} |")
     lines += [
         "",
         f"_Total OI: {s['total_pe_oi']:,} PE vs {s['total_ce_oi']:,} CE across "
@@ -175,10 +190,92 @@ def fno_symbol_for(ticker: str) -> str | None:
     index_map = {
         "^NSEI": "NIFTY", "NIFTY": "NIFTY",
         "^NSEBANK": "BANKNIFTY", "BANKNIFTY": "BANKNIFTY",
-        "FINNIFTY": "FINNIFTY", "MIDCPNIFTY": "MIDCPNIFTY",
+        "NIFTY_FIN_SERVICE.NS": "FINNIFTY", "FINNIFTY": "FINNIFTY",
+        "MIDCPNIFTY": "MIDCPNIFTY",
     }
     if t in index_map:
         return index_map[t]
     if t.endswith(".NS"):
         return t[:-3]  # stock derivatives chain uses the plain NSE symbol
     return None
+
+
+# ---------- option trade plan (deterministic; engine mode refines via LLM) ----------
+
+def build_trade_plan_md(snap: dict, rating: str, ticker: str) -> str:
+    """Translate the pipeline's rating + live chain into a concrete option plan.
+
+    Heuristics (documented in the output): first-OTM strike for direction,
+    premium stop at −40%, targets at +60% / +120% of premium, spot-level
+    invalidation at the opposing OI wall.
+    """
+    spot = snap.get("spot")
+    ladder = snap.get("atm_ladder") or []
+    expiry = snap.get("expiry")
+    bullish = rating in ("Buy", "Overweight")
+    bearish = rating in ("Sell", "Underweight")
+    header = f"## Option Trade Plan — {snap.get('symbol', ticker)} (expiry {expiry})\n"
+    disclaimer = (
+        "\n\n---\n_Derived from the agent pipeline's final rating plus live NSE chain data. "
+        "Options are leveraged and can go to zero — position-size for a 100% premium loss, "
+        "confirm the current NSE lot size, and treat this as research, not advice._"
+    )
+
+    if not (spot and ladder):
+        return header + "\nInsufficient chain data for a trade plan." + disclaimer
+
+    if not (bullish or bearish):
+        support = (snap.get("support_strikes") or [{}])[0].get("strike")
+        resistance = (snap.get("resistance_strikes") or [{}])[0].get("strike")
+        return (
+            header
+            + f"\n**Pipeline verdict: {rating} — no directional edge.**\n\n"
+            f"Spot {spot} sits between the {support} put wall and the {resistance} call wall "
+            f"(max pain {snap.get('max_pain')}). Buying premium here fights time decay without "
+            "a directional thesis; the plan is **no trade**. Re-run after a close beyond either "
+            "OI wall. (Range-selling structures exist for this regime but are for experienced, "
+            "margin-aware traders only.)" + disclaimer
+        )
+
+    if bullish:
+        candidates = [r for r in ladder if r["strike"] >= spot and r["ce_ltp"] > 0]
+        leg, side = (candidates[0] if candidates else None), "CE"
+        premium = leg and leg["ce_ltp"]
+        wall = (snap.get("support_strikes") or [{}])[0].get("strike")
+        invalidation = f"a close below the {wall} put wall"
+    else:
+        candidates = [r for r in reversed(ladder) if r["strike"] <= spot and r["pe_ltp"] > 0]
+        leg, side = (candidates[0] if candidates else None), "PE"
+        premium = leg and leg["pe_ltp"]
+        wall = (snap.get("resistance_strikes") or [{}])[0].get("strike")
+        invalidation = f"a close above the {wall} call wall"
+
+    if leg is None or not premium:
+        return header + "\nNo liquid near-ATM strike found for the direction." + disclaimer
+
+    strike = leg["strike"]
+    sl = round(premium * 0.60, 2)
+    t1 = round(premium * 1.60, 2)
+    t2 = round(premium * 2.20, 2)
+    risk = round(premium - sl, 2)
+    rr1 = round((t1 - premium) / risk, 2) if risk else None
+    rr2 = round((t2 - premium) / risk, 2) if risk else None
+    iv = leg["ce_iv"] if side == "CE" else leg["pe_iv"]
+
+    return (
+        header
+        + f"\n**Pipeline verdict: {rating} → {'bullish' if bullish else 'bearish'} — "
+        f"buy the {strike} {side}.**\n\n"
+        f"| Parameter | Level |\n|---|---|\n"
+        f"| Instrument | {snap.get('symbol', ticker)} {strike} {side}, expiry {expiry} |\n"
+        f"| Entry (last traded premium) | **₹{premium}** (IV {iv}%) |\n"
+        f"| Stop loss (premium) | ₹{sl} (−40%) |\n"
+        f"| Target 1 | ₹{t1} (+60%) — R:R **1:{rr1}** |\n"
+        f"| Target 2 | ₹{t2} (+120%) — R:R **1:{rr2}** |\n"
+        f"| Spot reference | {spot} · max pain {snap.get('max_pain')} |\n"
+        f"| Invalidation (spot) | Exit on {invalidation} |\n\n"
+        "Execution notes: enter on strength in the pipeline's direction, not into a fade; "
+        "book half at Target 1 and trail the rest; time decay accelerates into expiry — "
+        "avoid holding a losing long option overnight near expiry."
+        + disclaimer
+    )

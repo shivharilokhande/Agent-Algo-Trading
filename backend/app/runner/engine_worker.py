@@ -242,6 +242,41 @@ def main() -> int:
     decision = final_state.get("final_trade_decision", "")
     graph.memory_log.store_decision(ticker=ticker, trade_date=trade_date, final_trade_decision=decision)
     rating = graph.process_signal(decision) if decision else "REVIEW"
+
+    # F&O Desk: one extra deep-think call turns the verdict into an option trade plan
+    if cfg_in.get("fno_mode") and cfg_in.get("_fno_context"):
+        out({"type": "agent_status", "agent": "Portfolio Manager", "payload": {"status": "in_progress"}})
+        plan_prompt = (
+            "You are an experienced Indian index/equity options strategist. Based on the agent "
+            f"pipeline's FINAL RATING ({rating}) and decision below, plus the LIVE NSE option "
+            "chain (premiums are real last-traded prices), produce a concrete option trade plan "
+            "in markdown.\n\n"
+            "Requirements:\n"
+            "- Start with '## Option Trade Plan'.\n"
+            "- Choose the specific strike and side (CE/PE) with the best risk/reward for the "
+            "rating — justify vs. OI walls, max pain, IV, and the technical picture.\n"
+            "- Give a table: instrument & expiry, entry premium (from the chain), entry trigger, "
+            "stop loss (premium AND spot invalidation level), Target 1, Target 2, risk:reward "
+            "for each target.\n"
+            "- If the rating is Hold/REVIEW, say 'no trade' and state exactly what change would "
+            "create one (levels to watch).\n"
+            "- End with a one-line leverage risk warning. Do not invent premiums not in the chain.\n\n"
+            f"FINAL DECISION:\n{decision[:4000]}\n\nLIVE CHAIN:\n{cfg_in['_fno_context']}\n\n"
+            f"MARKET REPORT (technicals):\n{final_state.get('market_report', '')[:3000]}"
+        )
+        try:
+            plan = graph.deep_thinking_llm.invoke(
+                [("system", "You produce disciplined, risk-first option trade plans."),
+                 ("human", plan_prompt)]
+            ).content
+            if isinstance(plan, list):
+                plan = " ".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in plan)
+            out({"type": "report_section", "section": "fno_trade_plan", "content_md": str(plan)})
+        except Exception as exc:  # parent applies the deterministic fallback plan
+            out({"type": "message", "agent": "", "payload": {
+                "kind": "system",
+                "text": f"LLM trade-plan step failed ({exc}) — falling back to rule-based plan."}})
+        out({"type": "agent_status", "agent": "Portfolio Manager", "payload": {"status": "done"}})
     summary = decision.strip().split("\n")[0][:300] if decision else "No decision produced."
     out({"type": "result", "rating": rating, "decision_summary": summary, "stats": stats})
     return 0

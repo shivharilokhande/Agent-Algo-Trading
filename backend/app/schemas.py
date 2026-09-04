@@ -68,6 +68,7 @@ class RunCreate(BaseModel):
     data_vendors: dict[str, str] = Field(default_factory=dict)
     mode: Literal["demo", "engine"] = "demo"  # S7: Literal closes the demo-gate bypass
     hitl: bool = False  # P3-A5: pause before the Portfolio Manager
+    fno_mode: bool = False  # F&O Desk: produce an option trade plan after the decision
 
 
 class RunOut(BaseModel):

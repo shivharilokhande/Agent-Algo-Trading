@@ -31,6 +31,7 @@ ANALYST_AGENT = {
 }
 
 SECTION_TITLES = {
+    "fno_trade_plan": "Option Trade Plan",
     "derivatives_report": "F&O / Derivatives",
     "custom_report": "Custom Analysts",
     "market_report": "Market Analysis",
@@ -273,6 +274,7 @@ class RunManager:
                     snap = await asyncio.wait_for(
                         get_fno_snapshot(config["_fno_symbol"]), timeout=30
                     )
+                    config["_fno_snapshot"] = snap  # raw analytics for trade-plan stage
                     config["_fno_context"] = snapshot_to_md(snap)
                     await self.save_report(handle, "derivatives_report", config["_fno_context"])
                 except Exception as exc:  # noqa: BLE001 — F&O data must never block a run
@@ -292,6 +294,21 @@ class RunManager:
                 result = await run_demo(
                     self, handle, ticker, trade_date, config, run_id=run_id, resume=resume
                 )
+
+            # F&O Desk safety net: guarantee a trade plan exists (rule-based) when the
+            # engine's LLM plan step failed or the runner skipped it
+            if (config.get("fno_mode") and config.get("_fno_snapshot")
+                    and "fno_trade_plan" not in completed_sections(run_id)):
+                try:
+                    from ..fno import build_trade_plan_md
+
+                    await self.save_report(
+                        handle, "fno_trade_plan",
+                        build_trade_plan_md(config["_fno_snapshot"],
+                                            result.get("rating") or "REVIEW", ticker),
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception("Fallback trade plan failed")
 
             with SessionLocal() as db:
                 run = db.get(Run, run_id)

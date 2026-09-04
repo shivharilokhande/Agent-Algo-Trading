@@ -13,6 +13,7 @@ import Watchlists from "./pages/Watchlists";
 import Automations from "./pages/Automations";
 import Compare from "./pages/Compare";
 import Portfolio from "./pages/Portfolio";
+import FnoDesk from "./pages/FnoDesk";
 import Ensemble from "./pages/Ensemble";
 import Studio from "./pages/Studio";
 import Research from "./pages/Research";
@@ -32,6 +33,7 @@ const I = {
   layers: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="m12 2 9 5-9 5-9-5z"/><path d="m3 12 9 5 9-5M3 17l9 5 9-5"/></svg>,
   wrench: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3z"/></svg>,
   book: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg>,
+  candle: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="M7 4v3m0 10v3M7 7h-2v10h4V7zM17 2v4m0 12v4M17 6h-2v12h4V6z" transform="translate(1,0)"/></svg>,
 };
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -54,6 +56,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   const links = [
     { to: "/", label: "Dashboard", icon: I.home, end: true },
     { to: "/new", label: "New Analysis", icon: I.play },
+    { to: "/fno", label: "F&O Desk", icon: I.candle },
     { to: "/watchlists", label: "Watchlists", icon: I.list },
     { to: "/runs", label: "Run History", icon: I.clock },
     { to: "/automations", label: "Automations", icon: I.bolt },
@@ -134,6 +137,7 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
       <Route path="/new" element={<Protected><NewAnalysis /></Protected>} />
+      <Route path="/fno" element={<Protected><FnoDesk /></Protected>} />
       <Route path="/runs" element={<Protected><Runs /></Protected>} />
       <Route path="/watchlists" element={<Protected><Watchlists /></Protected>} />
       <Route path="/automations" element={<Protected><Automations /></Protected>} />

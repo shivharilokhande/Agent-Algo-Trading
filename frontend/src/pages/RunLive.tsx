@@ -14,13 +14,14 @@ const TEAMS: [string, string[]][] = [
 const SECTION_ORDER = [
   "derivatives_report", "market_report", "sentiment_report", "news_report",
   "fundamentals_report", "custom_report", "investment_plan",
-  "trader_investment_plan", "final_trade_decision",
+  "trader_investment_plan", "final_trade_decision", "fno_trade_plan",
 ];
 const SECTION_TITLES: Record<string, string> = {
   derivatives_report: "F&O", market_report: "Market", sentiment_report: "Sentiment",
   news_report: "News", fundamentals_report: "Fundamentals", custom_report: "Custom Analysts",
   investment_plan: "Research Decision",
   trader_investment_plan: "Trader Plan", final_trade_decision: "Final Decision",
+  fno_trade_plan: "🎯 Trade Plan",
 };
 
 const ASKABLE = ["Bull Researcher", "Bear Researcher", "Trader", "Aggressive Analyst", "Conservative Analyst", "Neutral Analyst"];

@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/runs", tags=["runs"])
 _REPORT_ORDER = [
     "derivatives_report", "market_report", "sentiment_report", "news_report",
     "fundamentals_report", "custom_report", "investment_plan",
-    "trader_investment_plan", "final_trade_decision",
+    "trader_investment_plan", "final_trade_decision", "fno_trade_plan",
 ]
 
 

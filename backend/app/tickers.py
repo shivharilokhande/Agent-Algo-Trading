@@ -48,8 +48,11 @@ def crypto_base(raw: str) -> str | None:
 INDEX_ALIASES = {
     "NIFTY": "^NSEI", "NIFTY50": "^NSEI",
     "BANKNIFTY": "^NSEBANK", "NIFTYBANK": "^NSEBANK",
+    "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
     "SENSEX": "^BSESN",
 }
+# Yahoo tickers that are indices despite not starting with ^
+INDEX_TICKERS = {"NIFTY_FIN_SERVICE.NS"}
 
 
 def normalize_ticker(raw: str) -> str:
@@ -68,7 +71,7 @@ def normalize_ticker(raw: str) -> str:
 
 
 def detect_asset_type(ticker: str) -> str:
-    if ticker.startswith("^"):
+    if ticker.startswith("^") or ticker in INDEX_TICKERS:
         return "index"
     return "crypto" if crypto_base(ticker) else "stock"
 

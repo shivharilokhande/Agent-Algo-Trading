@@ -139,6 +139,13 @@ def build_run(db: Session, user_id: str, cfg: dict) -> Run:
         fno_symbol = fno_symbol_for(ticker)
         if fno_symbol:
             config["_fno_symbol"] = fno_symbol  # runners fetch the live snapshot
+        if cfg.get("fno_mode") and not fno_symbol:
+            raise RunValidationError(
+                f"{ticker} has no NSE derivatives — F&O mode needs an index "
+                "(NIFTY/BANKNIFTY/FINNIFTY) or an F&O-listed .NS stock"
+            )
+    except RunValidationError:
+        raise
     except Exception:  # pragma: no cover
         pass
 
