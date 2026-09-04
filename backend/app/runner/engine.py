@@ -163,7 +163,17 @@ async def run_engine(
                 continue
             mtype = msg.get("type")
             if mtype == "report_section":
-                await mgr.save_report(handle, msg["section"], msg.get("content_md", ""))
+                content = msg.get("content_md", "")
+                if msg["section"] == "fno_trade_card" and config.get("_fno_snapshot"):
+                    # honesty pass: conditional rows must quote at-trigger premiums
+                    try:
+                        from ..fno import sanitize_card_rows
+
+                        card = sanitize_card_rows(json.loads(content), config["_fno_snapshot"])
+                        content = json.dumps(card)
+                    except Exception:  # noqa: BLE001 — never lose the card over this
+                        pass
+                await mgr.save_report(handle, msg["section"], content)
             elif mtype == "result":
                 result = {
                     "rating": msg.get("rating"),

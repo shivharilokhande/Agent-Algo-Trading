@@ -381,6 +381,48 @@ def build_trade_card(snap: dict, rating: str, ticker: str) -> dict:
     return card
 
 
+def sanitize_card_rows(card: dict, snap: dict) -> dict:
+    """Make conditional rows honest: a row that triggers at a different spot level
+    must quote the DELTA-ADJUSTED premium at that level, never today's LTP.
+
+    Parses the trigger level from the condition text, finds the instrument's
+    strike/side in the ladder, recomputes ep = ltp + |Δ|·|trigger − spot| and
+    rescales SL/TP/R:R accordingly. Rows it cannot parse are left untouched.
+    """
+    import re as _re
+
+    spot = snap.get("spot")
+    ladder = snap.get("atm_ladder") or []
+    if not (spot and ladder):
+        return card
+    for row in card.get("rows", []):
+        if not str(row.get("scenario", "")).upper().startswith("IF"):
+            continue  # 'NOW' rows quote live prices — correct as-is
+        m = _re.search(r"(\d[\d,]{2,})", str(row.get("condition", "")))
+        inst = _re.search(r"(\d[\d,]{2,})\s*(CE|PE)", str(row.get("instrument", "")))
+        if not (m and inst):
+            continue
+        trigger = float(m.group(1).replace(",", ""))
+        strike = float(inst.group(1).replace(",", ""))
+        side = inst.group(2)
+        leg = next((r for r in ladder if r["strike"] == strike), None)
+        if leg is None:
+            continue
+        ltp = leg["ce_ltp" if side == "CE" else "pe_ltp"]
+        delta = abs(leg.get("ce_delta" if side == "CE" else "pe_delta") or 0.35)
+        if not ltp:
+            continue
+        ep = round(ltp + delta * abs(trigger - spot), 2)
+        row["ep"] = ep
+        row["sl"] = round(ep * 0.60, 2)
+        row["tp1"] = round(ep * 1.60, 2)
+        row["tp2"] = round(ep * 2.20, 2)
+        row["rr1"], row["rr2"] = 1.5, 3.0
+        note = str(row.get("note", ""))
+        row["note"] = (f"₹{ltp} today at spot {spot} → est. ₹{ep} at trigger (Δ {delta}). " + note)[:200]
+    return card
+
+
 _CARD_JSON_RE = None  # compiled lazily
 
 
