@@ -23,8 +23,8 @@ TOOLS_BY_ANALYST = {
 RATINGS = ["Buy", "Overweight", "Hold", "Underweight", "Sell"]
 
 
-def _rng(ticker: str, trade_date: str) -> random.Random:
-    seed = int(hashlib.sha256(f"{ticker}|{trade_date}".encode()).hexdigest()[:12], 16)
+def _rng(ticker: str, trade_date: str, stack_tag: str = "") -> random.Random:
+    seed = int(hashlib.sha256(f"{ticker}|{trade_date}|{stack_tag}".encode()).hexdigest()[:12], 16)
     return random.Random(seed)
 
 
@@ -41,8 +41,13 @@ async def run_demo(
     run_id: str,
     resume: bool = False,
 ) -> dict:
-    rng = _rng(ticker, trade_date)
+    rng = _rng(ticker, trade_date, str(config.get("_stack_tag", "")))
     price = _fake_price(rng)
+    personas: dict = config.get("_agent_profiles", {})  # P4-A1
+
+    def persona_note(agent: str) -> str:
+        p = personas.get(agent, "")
+        return f"\n\n> **Persona (Agent Studio):** {p[:280]}\n" if p else ""
     rsi = round(rng.uniform(22, 82), 1)
     macd_sig = rng.choice(["bullish crossover", "bearish divergence", "flat"])
     trend = "uptrend" if rsi < 65 and "bull" in macd_sig else ("downtrend" if rsi > 70 else "consolidation")
@@ -102,10 +107,38 @@ async def run_demo(
         for tname, targs in TOOLS_BY_ANALYST[key]:
             await tool(agent, tname, {"symbol": ticker, "curr_date": trade_date, **targs})
         content = _analyst_report(key, ticker, trade_date, price, rsi, macd_sig, trend, sentiment, rng)
+        content += persona_note(agent)
+        if key == "fundamentals" and config.get("_grounding"):  # P4-A4 citations
+            cites = "\n".join(
+                f"> 📄 **{g['title']}** — “{g['snippet'][:220]}” "
+                + (f"([source]({g['url']}))" if g["url"].startswith("http") else "")
+                for g in config["_grounding"]
+            )
+            content += f"\n\n#### Grounded in the research library\n{cites}\n"
         await llm(agent, f"{agent} synthesized findings for {ticker}.")
         reports[section] = content
         await mgr.save_report(handle, section, content)
         await status(agent, "done")
+
+    # ---------- P4-A1: custom analysts ----------
+    customs = config.get("_custom_analysts", [])
+    if customs:
+        parts = []
+        for c in customs:
+            agent = c["name"]
+            await mgr.emit(handle, "agent_status", agent=agent, payload={"status": "in_progress"})
+            for tname in c.get("tools", [])[:4]:
+                await tool(agent, tname, {"symbol": ticker, "curr_date": trade_date})
+            take = rng.choice([
+                f"Through the lens of my mandate, {ticker}'s setup is {trend} with sentiment {sentiment:+.2f}; "
+                "the factor I weight most diverges slightly from the core team's read.",
+                f"My framework flags {rng.choice(['margin durability', 'flow positioning', 'regulatory exposure', 'supply-chain slack'])} "
+                f"as the swing factor for {ticker} at ${price}.",
+            ])
+            await llm(agent, f"{agent} completed a custom assessment.")
+            parts.append(f"### {agent}\n\n> **Persona:** {c.get('persona','')[:280]}\n\n{take}")
+            await mgr.emit(handle, "agent_status", agent=agent, payload={"status": "done"})
+        await mgr.save_report(handle, "custom_report", "## Custom Analysts (Agent Studio)\n\n" + "\n\n---\n\n".join(parts))
 
     # ---------- Stage 2: bull/bear debate ----------
     bull_points, bear_points = _debate_points(ticker, trend, sentiment, rng)

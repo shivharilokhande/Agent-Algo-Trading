@@ -59,6 +59,9 @@ def _migrate() -> None:
         "ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0",
         # C10: event sequence integrity at the DB level
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_run_events_run_seq ON run_events (run_id, seq)",
+        # P4-A4: full-text index over the research library (SQLite FTS5)
+        "CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5("
+        "content, title, doc_id UNINDEXED, tokenize='porter')",
     ]
     with engine.begin() as conn:
         for stmt in migrations:

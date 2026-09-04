@@ -14,7 +14,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from .config import CORS_ORIGINS, DEMO_MODE_AVAILABLE
 from .db import SessionLocal, init_db
 from .models import Run
-from .routers import admin, auth, automations, catalog, keys, memory, portfolio, presets, runs
+from .routers import admin, advanced, auth, automations, catalog, keys, memory, portfolio, presets, runs
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("agentalgo")
@@ -114,6 +114,61 @@ async def _schedule_loop() -> None:
         await asyncio.sleep(SCHEDULE_POLL_SECONDS)
 
 
+TRIGGER_POLL_SECONDS = 600
+
+
+def day_move_pct(ticker: str) -> float:
+    """Percent move of the latest close vs. the prior close (yfinance)."""
+    import yfinance as yf
+
+    closes = yf.Ticker(ticker).history(period="5d", auto_adjust=True)["Close"].dropna()
+    if len(closes) < 2:
+        raise ValueError("not enough price history")
+    return float((closes.iloc[-1] / closes.iloc[-2] - 1.0) * 100)
+
+
+async def _trigger_loop() -> None:
+    """P4-A6 — price-move triggers fire an analysis + alert (once per day per trigger)."""
+    from datetime import date as _date
+
+    from .models import Alert, Trigger
+    from .services import RunValidationError, create_run_for_user
+
+    while True:
+        try:
+            today = _date.today().isoformat()
+            with SessionLocal() as db:
+                triggers = (
+                    db.query(Trigger)
+                    .filter(Trigger.enabled.is_(True), Trigger.last_fired_date != today)
+                    .limit(100).all()
+                )
+                for t in triggers:
+                    try:
+                        move = await asyncio.to_thread(day_move_pct, t.ticker)
+                    except Exception as exc:  # noqa: BLE001
+                        log.info("Trigger price check failed %s: %s", t.ticker, exc)
+                        continue
+                    if abs(move) < t.threshold:
+                        continue
+                    base = {"trade_date": today, "mode": "demo", "research_depth": 1,
+                            **json.loads(t.config_json or "{}"), "ticker": t.ticker}
+                    try:
+                        run = await create_run_for_user(db, t.user_id, base)
+                        db.add(Alert(
+                            user_id=t.user_id, run_id=run.id, ticker=t.ticker, type="trigger",
+                            message=f"{t.ticker} moved {move:+.1f}% (threshold ±{t.threshold}%) — analysis fired automatically.",
+                        ))
+                        t.last_fired_date = today
+                        db.commit()
+                        log.info("Trigger fired: %s %+.1f%%", t.ticker, move)
+                    except RunValidationError as exc:
+                        log.info("Trigger run rejected %s: %s", t.ticker, exc)
+        except Exception:  # pragma: no cover
+            log.exception("Trigger sweep failed")
+        await asyncio.sleep(TRIGGER_POLL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -146,6 +201,7 @@ async def lifespan(app: FastAPI):
     jobs = [
         asyncio.create_task(_auto_resolution_loop()),
         asyncio.create_task(_schedule_loop()),
+        asyncio.create_task(_trigger_loop()),
     ]
     yield
     for job in jobs:
@@ -205,6 +261,7 @@ app.include_router(presets.router)
 app.include_router(admin.router)
 app.include_router(automations.router)
 app.include_router(portfolio.router)
+app.include_router(advanced.router)
 
 
 @app.get("/api/health")

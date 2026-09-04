@@ -72,6 +72,35 @@ def build_run(db: Session, user_id: str, cfg: dict) -> Run:
     if defaults.get("data_vendors") and not config.get("data_vendors"):
         config["data_vendors"] = defaults["data_vendors"]
 
+    # P4-A1: Agent Studio personas + custom analysts (demo runner consumes these)
+    import json as _json
+
+    from .models import AgentProfile
+
+    profiles = db.query(AgentProfile).filter(
+        AgentProfile.user_id == user_id, AgentProfile.enabled.is_(True)
+    ).all()
+    overrides = {p.agent_key: p.persona for p in profiles if not p.agent_key.startswith("custom:") and p.persona}
+    customs = [
+        {"name": p.display_name or p.agent_key.removeprefix("custom:"),
+         "persona": p.persona, "tools": _json.loads(p.tools_json or "[]")}
+        for p in profiles if p.agent_key.startswith("custom:")
+    ]
+    if overrides:
+        config["_agent_profiles"] = overrides
+    if customs:
+        config["_custom_analysts"] = customs
+
+    # P4-A4: grounded citations from the research library (as-of filtered)
+    try:
+        from .library import grounding_context
+
+        grounding = grounding_context(user_id, ticker, trade_date)
+        if grounding:
+            config["_grounding"] = grounding
+    except Exception:  # pragma: no cover — library must never block a run
+        pass
+
     run = Run(
         user_id=user_id,
         ticker=ticker,

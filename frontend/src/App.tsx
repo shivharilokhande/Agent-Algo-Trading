@@ -13,6 +13,9 @@ import Watchlists from "./pages/Watchlists";
 import Automations from "./pages/Automations";
 import Compare from "./pages/Compare";
 import Portfolio from "./pages/Portfolio";
+import Ensemble from "./pages/Ensemble";
+import Studio from "./pages/Studio";
+import Research from "./pages/Research";
 
 const I = {
   home: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"/></svg>,
@@ -26,6 +29,9 @@ const I = {
   bolt: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>,
   bell: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" width="16" height="16" stroke="currentColor"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>,
   wallet: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M16 15h2"/></svg>,
+  layers: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="m12 2 9 5-9 5-9-5z"/><path d="m3 12 9 5 9-5M3 17l9 5 9-5"/></svg>,
+  wrench: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3z"/></svg>,
+  book: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg>,
 };
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -52,6 +58,9 @@ function Shell({ children }: { children: React.ReactNode }) {
     { to: "/runs", label: "Run History", icon: I.clock },
     { to: "/automations", label: "Automations", icon: I.bolt },
     { to: "/portfolio", label: "Portfolio", icon: I.wallet },
+    { to: "/ensemble", label: "Ensemble", icon: I.layers },
+    { to: "/research", label: "Research", icon: I.book },
+    { to: "/studio", label: "Agent Studio", icon: I.wrench },
     { to: "/memory", label: "Memory", icon: I.brain },
     { to: "/settings", label: "Settings", icon: I.gear },
   ];
@@ -130,6 +139,9 @@ export default function App() {
       <Route path="/automations" element={<Protected><Automations /></Protected>} />
       <Route path="/compare" element={<Protected><Compare /></Protected>} />
       <Route path="/portfolio" element={<Protected><Portfolio /></Protected>} />
+      <Route path="/ensemble" element={<Protected><Ensemble /></Protected>} />
+      <Route path="/research" element={<Protected><Research /></Protected>} />
+      <Route path="/studio" element={<Protected><Studio /></Protected>} />
       <Route path="/runs/:id" element={<Protected><RunLive /></Protected>} />
       <Route path="/memory" element={<Protected><Memory /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />

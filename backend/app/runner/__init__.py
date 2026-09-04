@@ -31,6 +31,7 @@ ANALYST_AGENT = {
 }
 
 SECTION_TITLES = {
+    "custom_report": "Custom Analysts",
     "market_report": "Market Analysis",
     "sentiment_report": "Social Sentiment",
     "news_report": "News Analysis",

@@ -7,6 +7,9 @@ const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 export default function Automations() {
   const [schedules, setSchedules] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<any[]>([]);
+  const [triggers, setTriggers] = useState<any[]>([]);
+  const [tTicker, setTTicker] = useState("");
+  const [tThreshold, setTThreshold] = useState(3);
   const [msg, setMsg] = useState<{ kind: string; text: string } | null>(null);
   // new-schedule form
   const [name, setName] = useState("");
@@ -19,6 +22,7 @@ export default function Automations() {
   async function load() {
     setSchedules(await api.get("/api/schedules"));
     setAlerts(await api.get("/api/alerts"));
+    setTriggers(await api.get("/api/triggers"));
   }
   useEffect(() => { load(); }, []);
 
@@ -99,6 +103,42 @@ export default function Automations() {
               </tr>
             ))}
             {schedules.length === 0 && <tr><td colSpan={7} className="muted">No schedules yet.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card">
+        <h3>Price-move triggers <span className="muted">(P4 — event-driven autonomy)</span></h3>
+        <div className="row" style={{ marginBottom: 10 }}>
+          <input placeholder="Ticker" value={tTicker} style={{ width: 120 }}
+            onChange={(e) => setTTicker(e.target.value.toUpperCase())} />
+          <select value={tThreshold} onChange={(e) => setTThreshold(+e.target.value)} style={{ width: 140 }}>
+            {[1, 2, 3, 5, 8, 10].map((x) => <option key={x} value={x}>±{x}% day move</option>)}
+          </select>
+          <button disabled={!tTicker.trim()} onClick={async () => {
+            try { await api.post("/api/triggers", { ticker: tTicker.trim(), threshold: tThreshold }); setTTicker(""); load(); }
+            catch (ex: any) { setMsg({ kind: "error", text: ex.message }); }
+          }}>Add trigger</button>
+          <span className="muted">checked every 10 min · fires once per day · runs + alerts automatically</span>
+        </div>
+        <table>
+          <thead><tr><th>Ticker</th><th>Condition</th><th>Last fired</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            {triggers.map((t) => (
+              <tr key={t.id}>
+                <td><b>{t.ticker}</b></td>
+                <td>day move ≥ ±{t.threshold}%</td>
+                <td className="muted">{t.last_fired_date || "never"}</td>
+                <td><span className={`pill ${t.enabled ? "done" : "pending"}`}>{t.enabled ? "armed" : "paused"}</span></td>
+                <td className="row">
+                  <button className="secondary small" onClick={async () => { await api.post(`/api/triggers/${t.id}/toggle`); load(); }}>
+                    {t.enabled ? "Pause" : "Arm"}
+                  </button>
+                  <button className="danger small" onClick={async () => { await api.del(`/api/triggers/${t.id}`); load(); }}>Delete</button>
+                </td>
+              </tr>
+            ))}
+            {triggers.length === 0 && <tr><td colSpan={5} className="muted">No triggers yet.</td></tr>}
           </tbody>
         </table>
       </div>

@@ -199,6 +199,69 @@ class Alert(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class Ensemble(Base):
+    """P4-A3 — one analysis fanned out across N model stacks."""
+
+    __tablename__ = "ensembles"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    ticker: Mapped[str] = mapped_column(String(24))
+    trade_date: Mapped[str] = mapped_column(String(10))
+    run_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    consensus_json: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Trigger(Base):
+    """P4-A6 — event trigger that fires an analysis run."""
+
+    __tablename__ = "triggers"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    ticker: Mapped[str] = mapped_column(String(24))
+    type: Mapped[str] = mapped_column(String(24), default="price_move_pct")
+    threshold: Mapped[float] = mapped_column(Float, default=3.0)  # abs % day move
+    config_json: Mapped[str] = mapped_column(Text, default="{}")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_fired_date: Mapped[str] = mapped_column(String(10), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AgentProfile(Base):
+    """P4-A1 — persona override for a stock agent, or a custom analyst."""
+
+    __tablename__ = "agent_profiles"
+    __table_args__ = (UniqueConstraint("user_id", "agent_key", name="uq_user_agent"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    # stock agent key ("Market Analyst", …) or "custom:<name>" for custom analysts
+    agent_key: Mapped[str] = mapped_column(String(80))
+    display_name: Mapped[str] = mapped_column(String(80), default="")
+    persona: Mapped[str] = mapped_column(Text, default="")
+    tools_json: Mapped[str] = mapped_column(Text, default="[]")  # custom analysts only
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Document(Base):
+    """P4-A4 — research library document (SEC filing or AgentAlgo report)."""
+
+    __tablename__ = "documents"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    ticker: Mapped[str] = mapped_column(String(24), index=True)
+    source: Mapped[str] = mapped_column(String(24))  # sec_filing | report
+    title: Mapped[str] = mapped_column(String(255))
+    doc_date: Mapped[str] = mapped_column(String(10), default="")  # filing/trade date
+    url: Mapped[str] = mapped_column(String(512), default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class PaperPosition(Base):
     """P3-A2 — simulated position opened from a run's decision (paper trading)."""
 
