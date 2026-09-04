@@ -1,5 +1,53 @@
-"""F&O Desk tests: trade-plan builder + fno_mode run flow."""
+"""F&O Desk tests: trade-plan builder, Greeks, fno_mode run flow."""
 import time
+
+
+def test_bs_greeks_sanity():
+    from app.fno import bs_greeks
+
+    atm_call = bs_greeks(24000, 24000, 12.0, 14 / 365, is_call=True)
+    atm_put = bs_greeks(24000, 24000, 12.0, 14 / 365, is_call=False)
+    assert 0.45 <= atm_call["delta"] <= 0.58            # ATM call ≈ 0.5 (drift-adjusted)
+    assert abs((atm_call["delta"] - 1) - atm_put["delta"]) < 1e-9  # put-call delta parity
+    assert atm_call["theta_day"] < 0                     # long options bleed
+    assert atm_call["vega"] > 0
+    deep_itm = bs_greeks(24000, 20000, 12.0, 14 / 365, is_call=True)
+    assert deep_itm["delta"] > 0.95
+    deep_otm = bs_greeks(24000, 28000, 12.0, 14 / 365, is_call=True)
+    assert deep_otm["delta"] < 0.05
+    # missing IV → graceful None
+    assert bs_greeks(24000, 24000, 0, 14 / 365, is_call=True)["delta"] is None
+
+
+def test_delta_targeted_strike_selection():
+    from app.fno import build_trade_plan_md
+
+    snap = dict(SNAP)
+    snap["india_vix"] = 10.0
+    snap["atm_ladder"] = [
+        {"strike": 23800, "ce_ltp": 210.0, "pe_ltp": 45.0, "ce_oi": 1, "pe_oi": 1,
+         "ce_iv": 10, "pe_iv": 10, "ce_delta": 0.71, "pe_delta": -0.29, "ce_theta": -9.0, "pe_theta": -8.0, "ce_vega": 9, "pe_vega": 9},
+        {"strike": 23900, "ce_ltp": 140.0, "pe_ltp": 78.0, "ce_oi": 1, "pe_oi": 1,
+         "ce_iv": 10, "pe_iv": 10, "ce_delta": 0.55, "pe_delta": -0.45, "ce_theta": -10.0, "pe_theta": -9.5, "ce_vega": 10, "pe_vega": 10},
+        {"strike": 24000, "ce_ltp": 85.0, "pe_ltp": 120.0, "ce_oi": 1, "pe_oi": 1,
+         "ce_iv": 10, "pe_iv": 10, "ce_delta": 0.41, "pe_delta": -0.59, "ce_theta": -10.5, "pe_theta": -10.0, "ce_vega": 10, "pe_vega": 10},
+        {"strike": 24100, "ce_ltp": 48.0, "pe_ltp": 180.0, "ce_oi": 1, "pe_oi": 1,
+         "ce_iv": 10, "pe_iv": 10, "ce_delta": 0.27, "pe_delta": -0.73, "ce_theta": -9.0, "pe_theta": -8.5, "ce_vega": 9, "pe_vega": 9},
+    ]
+    md = build_trade_plan_md(snap, "Buy", "^NSEI")
+    assert "buy the 24000 CE" in md          # Δ 0.41 is closest to the 0.40 target
+    assert "Δ (delta)" in md and "0.41" in md
+    assert "θ (theta/day)" in md and "Breakeven at expiry" in md and "24085.0" in md
+    assert "IV 10% is fair vs India VIX" in md.replace("**", "")
+    # bearish side: PE with |Δ| nearest 0.40 is 23900 (−0.45)
+    md_pe = build_trade_plan_md(snap, "Sell", "^NSEI")
+    assert "buy the 23900 PE" in md_pe
+
+    # rich IV triggers the spread warning
+    snap_rich = dict(snap)
+    snap_rich["atm_ladder"] = [dict(r, ce_iv=15, pe_iv=15) for r in snap["atm_ladder"]]
+    md_rich = build_trade_plan_md(snap_rich, "Buy", "^NSEI")
+    assert "rich vs India VIX" in md_rich and "debit spread" in md_rich
 
 SNAP = {
     "symbol": "NIFTY", "spot": 23937.9, "expiry": "08-Sep-2026", "pcr": 0.898,

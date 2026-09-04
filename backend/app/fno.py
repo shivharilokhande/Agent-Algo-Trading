@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
+from datetime import datetime
 
 import httpx
 
@@ -32,6 +34,50 @@ INDEX_FNO = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"}
 
 _cache: dict[str, tuple[float, dict]] = {}
 CACHE_TTL = 600  # 10 min
+
+
+# ---------- Black-Scholes Greeks (NSE publishes IV; Delta/Theta/Vega we compute) ----------
+
+RISK_FREE_RATE = 0.07  # ~India 91-day T-bill; Greeks are insensitive to small changes
+
+
+def _norm_cdf(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _norm_pdf(x: float) -> float:
+    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+
+
+def bs_greeks(spot: float, strike: float, iv_pct: float, t_years: float,
+              is_call: bool, r: float = RISK_FREE_RATE) -> dict:
+    """Delta, per-day theta, and vega (per 1 IV point) for a European option."""
+    if not (spot and strike and iv_pct and iv_pct > 0):
+        return {"delta": None, "theta_day": None, "vega": None}
+    t = max(t_years, 0.5 / 365)  # floor at half a day to avoid expiry-day blowups
+    sigma = iv_pct / 100.0
+    sqrt_t = math.sqrt(t)
+    d1 = (math.log(spot / strike) + (r + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t)
+    d2 = d1 - sigma * sqrt_t
+    delta = _norm_cdf(d1) if is_call else _norm_cdf(d1) - 1.0
+    theta_year = (-(spot * _norm_pdf(d1) * sigma) / (2 * sqrt_t)
+                  + (-1 if is_call else 1) * -r * strike * math.exp(-r * t)
+                  * _norm_cdf(d2 if is_call else -d2))
+    vega = spot * _norm_pdf(d1) * sqrt_t / 100.0  # per 1 IV point
+    return {"delta": round(delta, 3), "theta_day": round(theta_year / 365.0, 2),
+            "vega": round(vega, 2)}
+
+
+def years_to_expiry(expiry: str | None) -> float:
+    """'08-Sep-2026' → year fraction from now (floored at half a day)."""
+    if not expiry:
+        return 7 / 365
+    try:
+        dt = datetime.strptime(expiry, "%d-%b-%Y")
+        days = (dt - datetime.now()).total_seconds() / 86400 + 0.65  # expiry ~15:30 IST
+        return max(days, 0.5) / 365
+    except ValueError:
+        return 7 / 365
 
 
 def compute_max_pain(strikes: list[dict]) -> float | None:
@@ -78,15 +124,27 @@ def analyze_chain(records: dict, symbol: str) -> dict:
     resistance = sorted(strikes, key=lambda s: -s["ce_oi"])[:3]
     support = sorted(strikes, key=lambda s: -s["pe_oi"])[:3]
     atm = min(strikes, key=lambda s: abs(s["strike"] - spot)) if (spot and strikes) else None
-    # nearest-ATM ladder with live premiums — the raw material for trade plans
+    # nearest-ATM ladder with live premiums + computed Greeks
     near_atm = sorted(strikes, key=lambda s: abs(s["strike"] - (spot or 0)))[:7]
     near_atm = sorted(near_atm, key=lambda s: s["strike"])
+    t_years = years_to_expiry(expiry)
+    ladder = []
+    for s in near_atm:
+        ce_g = bs_greeks(spot, s["strike"], s["ce_iv"], t_years, is_call=True)
+        pe_g = bs_greeks(spot, s["strike"], s["pe_iv"], t_years, is_call=False)
+        ladder.append({
+            "strike": s["strike"], "ce_ltp": s["ce_ltp"], "pe_ltp": s["pe_ltp"],
+            "ce_oi": s["ce_oi"], "pe_oi": s["pe_oi"], "ce_iv": s["ce_iv"], "pe_iv": s["pe_iv"],
+            "ce_delta": ce_g["delta"], "pe_delta": pe_g["delta"],
+            "ce_theta": ce_g["theta_day"], "pe_theta": pe_g["theta_day"],
+            "ce_vega": ce_g["vega"], "pe_vega": pe_g["vega"],
+        })
+    atm_iv = ((atm["ce_iv"] or 0) + (atm["pe_iv"] or 0)) / 2 if atm else None
     return {
-        "atm_ladder": [
-            {"strike": s["strike"], "ce_ltp": s["ce_ltp"], "pe_ltp": s["pe_ltp"],
-             "ce_oi": s["ce_oi"], "pe_oi": s["pe_oi"], "ce_iv": s["ce_iv"], "pe_iv": s["pe_iv"]}
-            for s in near_atm
-        ],
+        "atm_ladder": ladder,
+        "days_to_expiry": round(t_years * 365, 1),
+        "iv_skew": round((atm["pe_iv"] or 0) - (atm["ce_iv"] or 0), 2) if atm else None,
+        "atm_iv": round(atm_iv, 2) if atm_iv else None,
         "symbol": symbol,
         "spot": spot,
         "expiry": expiry,
@@ -169,12 +227,21 @@ def snapshot_to_md(s: dict) -> str:
     ]
     if vix is not None:
         lines.append(f"- **India VIX:** {vix}")
+    if s.get("days_to_expiry") is not None:
+        lines.append(f"- **Days to expiry:** {s['days_to_expiry']}")
+    if s.get("iv_skew") is not None:
+        skew = s["iv_skew"]
+        skew_read = ("puts bid up — downside fear" if skew > 1.5
+                     else "calls bid up — upside chase" if skew < -1.5 else "balanced")
+        lines.append(f"- **IV skew (PE−CE at ATM):** {skew:+.2f} — {skew_read}")
     ladder = s.get("atm_ladder") or []
     if ladder:
-        lines += ["", "| Strike | CE premium | PE premium | CE OI | PE OI |", "|---|---|---|---|---|"]
+        lines += ["", "| Strike | CE ₹ (Δ / θ/day / IV) | PE ₹ (Δ / θ/day / IV) | CE OI | PE OI |",
+                  "|---|---|---|---|---|"]
         for row in ladder:
-            lines.append(f"| {row['strike']} | ₹{row['ce_ltp']} | ₹{row['pe_ltp']} "
-                         f"| {row['ce_oi']:,} | {row['pe_oi']:,} |")
+            ce = (f"₹{row['ce_ltp']} ({row.get('ce_delta')} / {row.get('ce_theta')} / {row['ce_iv']}%)")
+            pe = (f"₹{row['pe_ltp']} ({row.get('pe_delta')} / {row.get('pe_theta')} / {row['pe_iv']}%)")
+            lines.append(f"| {row['strike']} | {ce} | {pe} | {row['ce_oi']:,} | {row['pe_oi']:,} |")
     lines += [
         "",
         f"_Total OI: {s['total_pe_oi']:,} PE vs {s['total_ce_oi']:,} CE across "
@@ -237,45 +304,75 @@ def build_trade_plan_md(snap: dict, rating: str, ticker: str) -> str:
             "margin-aware traders only.)" + disclaimer
         )
 
+    # Delta-targeted strike selection: for long options the 0.35–0.55 |Δ| band
+    # balances directional exposure against theta bleed. Pick the strike whose
+    # |Δ| is closest to 0.40 on the pipeline's side.
+    TARGET_DELTA = 0.40
     if bullish:
-        candidates = [r for r in ladder if r["strike"] >= spot and r["ce_ltp"] > 0]
-        leg, side = (candidates[0] if candidates else None), "CE"
-        premium = leg and leg["ce_ltp"]
+        side, dkey, pkey, ivkey, tkey = "CE", "ce_delta", "ce_ltp", "ce_iv", "ce_theta"
         wall = (snap.get("support_strikes") or [{}])[0].get("strike")
         invalidation = f"a close below the {wall} put wall"
     else:
-        candidates = [r for r in reversed(ladder) if r["strike"] <= spot and r["pe_ltp"] > 0]
-        leg, side = (candidates[0] if candidates else None), "PE"
-        premium = leg and leg["pe_ltp"]
+        side, dkey, pkey, ivkey, tkey = "PE", "pe_delta", "pe_ltp", "pe_iv", "pe_theta"
         wall = (snap.get("resistance_strikes") or [{}])[0].get("strike")
         invalidation = f"a close above the {wall} call wall"
 
-    if leg is None or not premium:
+    candidates = [r for r in ladder if (r.get(pkey) or 0) > 0 and r.get(dkey) is not None]
+    scored = sorted(candidates, key=lambda r: abs(abs(r[dkey]) - TARGET_DELTA))
+    leg = scored[0] if scored else None
+    if leg is None:
+        # fall back to first-OTM when Greeks are unavailable (missing IV on chain)
+        fallback = ([r for r in ladder if r["strike"] >= spot and r["ce_ltp"] > 0] if bullish
+                    else [r for r in reversed(ladder) if r["strike"] <= spot and r["pe_ltp"] > 0])
+        leg = fallback[0] if fallback else None
+    if leg is None or not leg.get(pkey):
         return header + "\nNo liquid near-ATM strike found for the direction." + disclaimer
 
-    strike = leg["strike"]
+    strike, premium = leg["strike"], leg[pkey]
+    delta, iv, theta = leg.get(dkey), leg.get(ivkey), leg.get(tkey)
     sl = round(premium * 0.60, 2)
     t1 = round(premium * 1.60, 2)
     t2 = round(premium * 2.20, 2)
     risk = round(premium - sl, 2)
     rr1 = round((t1 - premium) / risk, 2) if risk else None
     rr2 = round((t2 - premium) / risk, 2) if risk else None
-    iv = leg["ce_iv"] if side == "CE" else leg["pe_iv"]
+    breakeven = round(strike + premium, 2) if side == "CE" else round(strike - premium, 2)
+    move_t1 = round((t1 - premium) / abs(delta), 1) if delta else None
+
+    # IV richness vs India VIX: paying 30%+ over VIX means the move must be fast
+    vix = snap.get("india_vix")
+    iv_note = ""
+    if iv and vix:
+        ratio = iv / vix
+        if ratio >= 1.3:
+            iv_note = (f"⚠️ IV {iv}% is rich vs India VIX {vix} ({ratio:.1f}×) — premium is "
+                       "expensive; consider a debit spread instead of a naked long option.")
+        elif ratio <= 0.9:
+            iv_note = f"IV {iv}% is cheap vs India VIX {vix} — favorable premium buying conditions."
+        else:
+            iv_note = f"IV {iv}% is fair vs India VIX {vix}."
 
     return (
         header
         + f"\n**Pipeline verdict: {rating} → {'bullish' if bullish else 'bearish'} — "
-        f"buy the {strike} {side}.**\n\n"
+        f"buy the {strike} {side}** (selected for Δ ≈ {TARGET_DELTA}: best "
+        "exposure-per-theta among near-ATM strikes).\n\n"
         f"| Parameter | Level |\n|---|---|\n"
         f"| Instrument | {snap.get('symbol', ticker)} {strike} {side}, expiry {expiry} |\n"
-        f"| Entry (last traded premium) | **₹{premium}** (IV {iv}%) |\n"
+        f"| Entry (last traded premium) | **₹{premium}** |\n"
+        f"| Δ (delta) | {delta} — gains ≈ ₹{abs(delta or 0):.2f} per point of spot move |\n"
+        f"| θ (theta/day) | ₹{theta} — daily decay cost held flat |\n"
+        f"| IV | {iv}% |\n"
+        f"| Breakeven at expiry | {breakeven} |\n"
         f"| Stop loss (premium) | ₹{sl} (−40%) |\n"
-        f"| Target 1 | ₹{t1} (+60%) — R:R **1:{rr1}** |\n"
+        f"| Target 1 | ₹{t1} (+60%) — R:R **1:{rr1}**"
+        + (f" — needs ≈ {move_t1} pts of spot move |" if move_t1 else " |") + "\n"
         f"| Target 2 | ₹{t2} (+120%) — R:R **1:{rr2}** |\n"
         f"| Spot reference | {spot} · max pain {snap.get('max_pain')} |\n"
         f"| Invalidation (spot) | Exit on {invalidation} |\n\n"
-        "Execution notes: enter on strength in the pipeline's direction, not into a fade; "
-        "book half at Target 1 and trail the rest; time decay accelerates into expiry — "
-        "avoid holding a losing long option overnight near expiry."
+        + (iv_note + "\n\n" if iv_note else "")
+        + "Execution notes: enter on strength in the pipeline's direction, not into a fade; "
+        "book half at Target 1 and trail the rest; theta accelerates into expiry — avoid "
+        "holding a losing long option overnight in the final week."
         + disclaimer
     )
