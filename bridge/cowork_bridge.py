@@ -142,6 +142,26 @@ def _extract_json(text: str) -> dict | None:
 
 
 TOKEN_FILE = BRIDGE_DIR / ".cowork_token"  # optional: output of `claude setup-token`
+RUNTIME_SETTINGS = BRIDGE_DIR / ".claude_settings_runtime.json"
+_settings_mtime: float | None = None
+
+
+def _effective_settings() -> Path:
+    """Settings override for the CLI. The settings file's `env` block outranks
+    process env, so the subscription token must be injected HERE, not via env."""
+    global _settings_mtime
+    if not TOKEN_FILE.exists():
+        return SETTINGS_OVERRIDE
+    mtime = TOKEN_FILE.stat().st_mtime
+    if _settings_mtime != mtime or not RUNTIME_SETTINGS.exists():
+        base = json.loads(SETTINGS_OVERRIDE.read_text())
+        token = TOKEN_FILE.read_text().strip()
+        if token:
+            base.setdefault("env", {})["ANTHROPIC_AUTH_TOKEN"] = token
+        RUNTIME_SETTINGS.write_text(json.dumps(base))
+        RUNTIME_SETTINGS.chmod(0o600)
+        _settings_mtime = mtime
+    return RUNTIME_SETTINGS
 
 
 async def _call_claude(prompt: str, model: str) -> str:
@@ -152,15 +172,10 @@ async def _call_claude(prompt: str, model: str) -> str:
            if not k.startswith(("CLAUDE", "ANTHROPIC", "CLAUDECODE"))}
     # neutralize any global redirection (Ollama/OpenRouter overrides in ~/.claude)
     env.update({"ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": "", "ANTHROPIC_API_KEY": ""})
-    # long-lived subscription token from `claude setup-token`, if provided
-    if TOKEN_FILE.exists():
-        token = TOKEN_FILE.read_text().strip()
-        if token:
-            env["ANTHROPIC_AUTH_TOKEN"] = token
 
     proc = await asyncio.create_subprocess_exec(
         CLAUDE_BIN, "-p", "--output-format", "json", "--max-turns", "1",
-        "--model", model, "--settings", str(SETTINGS_OVERRIDE),
+        "--model", model, "--settings", str(_effective_settings()),
         "--tools", "",  # pure text generation — no local tool use inside the CLI
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE, env=env, cwd=str(BRIDGE_DIR),
@@ -172,15 +187,18 @@ async def _call_claude(prompt: str, model: str) -> str:
     except asyncio.TimeoutError as exc:
         proc.kill()
         raise HTTPException(status_code=504, detail="claude CLI call timed out") from exc
-    if proc.returncode != 0:
-        raise HTTPException(status_code=502,
-                            detail=f"claude CLI exited {proc.returncode}: {stderr.decode()[-300:]}")
+    out_text = stdout.decode(errors="replace")
+    err_text = stderr.decode(errors="replace")
+    payload = None
     try:
-        payload = json.loads(stdout.decode())
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=502, detail="claude CLI returned non-JSON") from exc
-    if payload.get("is_error"):
-        raise HTTPException(status_code=502, detail=f"claude: {payload.get('result', 'error')[:300]}")
+        payload = json.loads(out_text.strip().splitlines()[0]) if out_text.strip() else None
+    except (json.JSONDecodeError, IndexError):
+        pass
+    if proc.returncode != 0 or payload is None or payload.get("is_error"):
+        reason = (payload or {}).get("result") or err_text[-400:] or f"exit {proc.returncode}"
+        log.error("claude call failed (exit %s): %s | stderr: %s",
+                  proc.returncode, str(reason)[:500], err_text[-300:])
+        raise HTTPException(status_code=502, detail=f"claude: {str(reason)[:300]}")
     return payload.get("result") or ""
 
 

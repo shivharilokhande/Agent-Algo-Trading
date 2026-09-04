@@ -10,3 +10,4 @@ backend/.env
 *.log
 .pytest_cache/
 .cowork_token
+.claude_settings_runtime.json

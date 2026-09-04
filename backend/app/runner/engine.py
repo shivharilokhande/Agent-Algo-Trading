@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import signal
 import sys
 from pathlib import Path
@@ -173,14 +174,17 @@ async def run_engine(
             # surface the root-cause exception line, not a traceback fragment
             lines = [l for l in stderr.strip().splitlines() if l.strip()]
             cause = ""
+            # prefer the last line that names an actual exception/error
             for line in reversed(lines):
-                if not line.startswith(" ") and not line.startswith("^"):
+                if re.search(r"(Error|Exception|refused|denied|timeout|429|502)", line, re.I):
                     cause = line.strip()
                     break
-            # S8: scrub anything key-shaped before persisting the error
-            import re
-
-            # L1: broad key-shape redaction (OpenAI/Anthropic/Google/AWS/GitHub/Slack …)
+            if not cause:
+                for line in reversed(lines):
+                    if not line.startswith(" ") and not line.startswith("^"):
+                        cause = line.strip()
+                        break
+            # S8/L1: broad key-shape redaction (OpenAI/Anthropic/Google/AWS/GitHub/Slack …)
             cause = re.sub(
                 r"\b(sk-|key-|Bearer\s+|AIza|AKIA|ASIA|ghp_|gho_|xox[bap]-)[A-Za-z0-9_\-\./+]+",
                 "[redacted]", cause,
