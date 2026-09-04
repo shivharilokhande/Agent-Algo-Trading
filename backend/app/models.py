@@ -153,6 +153,52 @@ class RunReport(Base):
     run: Mapped[Run] = relationship(back_populates="reports")
 
 
+class Watchlist(Base):
+    """P2.1 — named ticker list."""
+
+    __tablename__ = "watchlists"
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_user_watchlist"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    tickers_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Schedule(Base):
+    """P2.2 — recurring analysis schedule (server-local time)."""
+
+    __tablename__ = "schedules"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    tickers_json: Mapped[str] = mapped_column(Text, default="[]")
+    config_json: Mapped[str] = mapped_column(Text, default="{}")
+    cadence: Mapped[str] = mapped_column(String(12), default="weekdays")  # daily|weekdays|weekly
+    weekday: Mapped[int] = mapped_column(Integer, default=0)  # weekly cadence: 0=Mon
+    hour: Mapped[int] = mapped_column(Integer, default=7)  # server-local hour 0-23
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_fired_date: Mapped[str] = mapped_column(String(10), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Alert(Base):
+    """P2.3 — rating-change / REVIEW notifications."""
+
+    __tablename__ = "alerts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    ticker: Mapped[str] = mapped_column(String(24))
+    type: Mapped[str] = mapped_column(String(20))  # rating_change | review
+    message: Mapped[str] = mapped_column(Text, default="")
+    read: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class MemoryEntry(Base):
     """Decision-log entry with pending → resolved lifecycle (F8)."""
 

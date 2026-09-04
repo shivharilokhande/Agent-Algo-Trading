@@ -14,6 +14,10 @@ Multi-user web platform for the [TradingAgents](https://github.com/TauricResearc
 - **Decision log** — pending → resolved with real yfinance returns, alpha vs. auto-detected benchmark (SPY/^NSEI/^N225/…), reflections re-injected into future runs
 - **Run recovery** — cancel/resume from checkpoints; server restarts leave runs resumable
 - **Presets & defaults** with loud validation (engine `TRADINGAGENTS_*` parity)
+- **Watchlists** (P2) — run the whole pipeline across a ticker list in one click; over-cap runs queue and start automatically; latest-rating grid
+- **Scheduled analyses** (P2) — daily / weekdays / weekly at a chosen hour (server-local), with per-schedule depth/mode
+- **Alerts** (P2) — rating-tier changes and REVIEW outcomes, with an unread bell in the top bar
+- **Run comparison** (P2) — select two runs in history for a side-by-side section diff
 - **Super-admin SaaS dashboard** — platform stats (users, runs, tokens, ratings, top tickers) and user management (promote/demote/delete). Bootstrap account: `AGENTALGO_ADMIN_EMAIL` / `AGENTALGO_ADMIN_PASSWORD` (dev default `admin@agentalgo.dev` / `admin12345` — **change in production**). Admins see a Research/Admin switch in the top bar.
 
 ## Local development (macOS/Linux)

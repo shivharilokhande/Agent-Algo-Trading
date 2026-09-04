@@ -9,19 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
-from ..config import DEMO_MODE_AVAILABLE, MAX_CONCURRENT_RUNS_PER_USER
+from ..config import MAX_CONCURRENT_RUNS_PER_USER
 from ..db import get_db
-from ..models import ApiKey, Run, RunEvent, RunReport, User
-from ..runner import SECTION_TITLES, manager, past_memory_context
+from ..models import Run, RunEvent, RunReport, User
+from ..runner import SECTION_TITLES, manager
 from ..schemas import ReportOut, RunCreate, RunEventOut, RunOut
 from ..security import create_stream_ticket, decode_stream_ticket, get_current_user
-from ..tickers import (
-    detect_asset_type,
-    filter_analysts_for_asset_type,
-    normalize_ticker,
-    resolve_benchmark,
-    validate_trade_date,
-)
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -58,70 +51,13 @@ async def create_run(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    # validation (F3.1–F3.4)
+    from ..services import RunValidationError, create_run_for_user
+
     try:
-        ticker = normalize_ticker(body.ticker)
-        trade_date = validate_trade_date(body.trade_date)
-    except ValueError as exc:
+        # P2: over-cap runs are queued and started by the pump, not rejected
+        run = await create_run_for_user(db, user.id, body.model_dump())
+    except RunValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    asset_type = detect_asset_type(ticker)
-    analysts = filter_analysts_for_asset_type(
-        [a for a in body.analysts if a in ("market", "social", "news", "fundamentals")],
-        asset_type,
-    )
-    if not analysts:
-        raise HTTPException(status_code=422, detail="Select at least one applicable analyst")
-    if body.research_depth not in (1, 3, 5):
-        raise HTTPException(status_code=422, detail="research_depth must be 1, 3 or 5")
-
-    mode = body.mode
-    if mode == "demo" and not DEMO_MODE_AVAILABLE:
-        raise HTTPException(status_code=422, detail="Demo mode is disabled on this deployment")
-    if mode == "engine":
-        has_key = (
-            db.query(ApiKey)
-            .filter(ApiKey.user_id == user.id, ApiKey.provider == body.llm_provider)
-            .one_or_none()
-        )
-        if has_key is None:
-            raise HTTPException(
-                status_code=422,
-                detail=f"No credential stored for provider '{body.llm_provider}'. Add it in Settings → API Keys.",
-            )
-
-    # C7: merge the user's saved defaults into this run's config
-    from ..models import Setting
-
-    setting_row = db.get(Setting, user.id)
-    defaults = json.loads(setting_row.config_json) if setting_row else {}
-
-    config = body.model_dump()
-    config["ticker"] = ticker
-    config["analysts"] = analysts
-    config["asset_type"] = asset_type
-    config["_memory_context"] = past_memory_context(user.id, ticker)
-    if defaults.get("data_vendors") and not config.get("data_vendors"):
-        config["data_vendors"] = defaults["data_vendors"]
-    benchmark_override = defaults.get("benchmark_ticker") or None
-
-    run = Run(
-        user_id=user.id,
-        ticker=ticker,
-        asset_type=asset_type,
-        trade_date=trade_date,
-        config_json=json.dumps(config),
-        mode=mode,
-        benchmark=resolve_benchmark(ticker, override=benchmark_override),
-    )
-    db.add(run)
-    db.commit()
-    try:
-        # NFR-S2/C6: cap enforced atomically inside the manager lock
-        await manager.start(run.id, user_id=user.id, max_concurrent=MAX_CONCURRENT_RUNS_PER_USER)
-    except PermissionError as exc:
-        db.delete(run)
-        db.commit()
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
     return _to_out(run)
 
 

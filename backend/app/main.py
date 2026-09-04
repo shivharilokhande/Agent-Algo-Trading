@@ -14,7 +14,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from .config import CORS_ORIGINS, DEMO_MODE_AVAILABLE
 from .db import SessionLocal, init_db
 from .models import Run
-from .routers import admin, auth, catalog, keys, memory, presets, runs
+from .routers import admin, auth, automations, catalog, keys, memory, presets, runs
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("agentalgo")
@@ -68,12 +68,58 @@ DISCLAIMER = (
 )
 
 
+SCHEDULE_POLL_SECONDS = 60
+
+
+def schedule_is_due(cadence: str, weekday: int, hour: int, last_fired: str, now) -> bool:
+    """P2.2 due check (server-local time). Fires once per due day at/after `hour`."""
+    today = now.date().isoformat()
+    if last_fired == today or now.hour < hour:
+        return False
+    if cadence == "daily":
+        return True
+    if cadence == "weekdays":
+        return now.weekday() < 5
+    return now.weekday() == weekday  # weekly
+
+
+async def _schedule_loop() -> None:
+    """P2.2 — fire due schedules; runs queue through the pump."""
+    from datetime import datetime as dt
+
+    from .models import Schedule
+    from .services import RunValidationError, create_run_for_user
+
+    while True:
+        try:
+            now = dt.now()
+            with SessionLocal() as db:
+                due = [
+                    s for s in db.query(Schedule).filter(Schedule.enabled.is_(True)).all()
+                    if schedule_is_due(s.cadence, s.weekday, s.hour, s.last_fired_date, now)
+                ]
+                for s in due:
+                    base = {"trade_date": now.date().isoformat(), "mode": "demo",
+                            "research_depth": 1, **json.loads(s.config_json or "{}")}
+                    for ticker in json.loads(s.tickers_json):
+                        try:
+                            await create_run_for_user(db, s.user_id, {**base, "ticker": ticker})
+                        except RunValidationError as exc:
+                            log.info("Schedule %s skipped %s: %s", s.name, ticker, exc)
+                    s.last_fired_date = now.date().isoformat()
+                    log.info("Schedule fired: %s (%s tickers)", s.name, len(json.loads(s.tickers_json)))
+                db.commit()
+        except Exception:  # pragma: no cover
+            log.exception("Schedule sweep failed")
+        await asyncio.sleep(SCHEDULE_POLL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     with SessionLocal() as db:
-        # F9 — runs left 'running'/'queued' by a previous process are resumable
-        stale = db.query(Run).filter(Run.status.in_(("running", "queued"))).all()
+        # F9 — runs mid-execution at shutdown are resumable; queued runs restart via the pump
+        stale = db.query(Run).filter(Run.status == "running").all()
         for run in stale:
             run.status = "interrupted"
             run.error = "Server restarted mid-run — resume to continue from checkpoint."
@@ -94,9 +140,16 @@ async def lifespan(app: FastAPI):
         else:
             admin_user.is_admin = True
         db.commit()
-    job = asyncio.create_task(_auto_resolution_loop())
+    from .runner import pump_queued_runs
+
+    await pump_queued_runs()  # P2: restart anything that was waiting for a slot
+    jobs = [
+        asyncio.create_task(_auto_resolution_loop()),
+        asyncio.create_task(_schedule_loop()),
+    ]
     yield
-    job.cancel()
+    for job in jobs:
+        job.cancel()
 
 
 app = FastAPI(
@@ -150,6 +203,7 @@ app.include_router(runs.router)
 app.include_router(memory.router)
 app.include_router(presets.router)
 app.include_router(admin.router)
+app.include_router(automations.router)
 
 
 @app.get("/api/health")

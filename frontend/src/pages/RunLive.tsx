@@ -68,7 +68,17 @@ export default function RunLive() {
       };
     }
     connect();
-    return () => { closedByUs = true; wsRef.current?.close(); };
+    // P2: a queued run has no live stream yet — poll until it starts, then reconnect
+    const queuedPoll = setInterval(async () => {
+      if (closedByUs || ended) { clearInterval(queuedPoll); return; }
+      try {
+        const r = await api.get<RunOut>(`/api/runs/${id}`);
+        setRun(r);
+        if (r.status === "running" && wsRef.current?.readyState !== WebSocket.OPEN) connect();
+        if (["done", "failed", "cancelled", "interrupted"].includes(r.status)) clearInterval(queuedPoll);
+      } catch { /* ignore */ }
+    }, 3000);
+    return () => { closedByUs = true; clearInterval(queuedPoll); wsRef.current?.close(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 

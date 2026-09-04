@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, RunOut } from "../api";
 
 export default function Runs() {
+  const nav = useNavigate();
+  const [selected, setSelected] = useState<string[]>([]);
+  function toggleSelect(id: string) {
+    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s.slice(-1), id]));
+  }
   const [runs, setRuns] = useState<RunOut[]>([]);
   const [ticker, setTicker] = useState("");
   const [status, setStatus] = useState("");
@@ -38,11 +43,15 @@ export default function Runs() {
           {["done", "running", "interrupted", "cancelled", "failed"].map((s) => <option key={s}>{s}</option>)}
         </select>
         <button className="secondary" onClick={load}>Filter</button>
+        <button disabled={selected.length !== 2}
+          onClick={() => nav(`/compare?a=${selected[0]}&b=${selected[1]}`)}>
+          Compare selected ({selected.length}/2)
+        </button>
       </div>
       <div className="card">
         <table>
           <thead>
-            <tr><th>Ticker</th><th>Trade date</th><th>Mode</th><th>Depth</th><th>Status</th>
+            <tr><th></th><th>Ticker</th><th>Trade date</th><th>Mode</th><th>Depth</th><th>Status</th>
               <th>Rating</th><th>Tokens</th><th>Duration</th><th></th></tr>
           </thead>
           <tbody>
@@ -52,6 +61,8 @@ export default function Runs() {
               const tokens = (r.stats.tokens_in ?? 0) + (r.stats.tokens_out ?? 0);
               return (
                 <tr key={r.id}>
+                  <td><input type="checkbox" checked={selected.includes(r.id)}
+                    onChange={() => toggleSelect(r.id)} /></td>
                   <td><b>{r.ticker}</b></td>
                   <td>{r.trade_date}</td>
                   <td className="muted">{r.mode}</td>
@@ -68,7 +79,7 @@ export default function Runs() {
                 </tr>
               );
             })}
-            {runs.length === 0 && <tr><td colSpan={9} className="muted">No runs match.</td></tr>}
+            {runs.length === 0 && <tr><td colSpan={10} className="muted">No runs match.</td></tr>}
           </tbody>
         </table>
       </div>

@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..db import SessionLocal
-from ..models import MemoryEntry, Run, RunEvent, RunReport
+from ..models import Alert, MemoryEntry, Run, RunEvent, RunReport
 
 log = logging.getLogger("agentalgo.runner")
 
@@ -234,6 +234,7 @@ class RunManager:
                     )
                 )
                 db.commit()
+                maybe_create_alert(db, run)  # P2.3
             await self.emit(
                 handle,
                 "run_status",
@@ -263,6 +264,7 @@ class RunManager:
                         pass
             async with self._lock:
                 self._handles.pop(run_id, None)
+            await pump_queued_runs()  # P2: a slot freed — start the oldest queued run
 
     def _finalize(self, run_id: str, status: str, error: str = "") -> None:
         with SessionLocal() as db:
@@ -300,6 +302,53 @@ class RunManager:
 
 
 manager = RunManager()
+
+
+def maybe_create_alert(db, run: Run) -> None:
+    """P2.3 — alert on REVIEW or a rating-tier change vs. the previous done run."""
+    if run.rating == "REVIEW":
+        db.add(Alert(
+            user_id=run.user_id, run_id=run.id, ticker=run.ticker, type="review",
+            message=f"{run.ticker} ({run.trade_date}): decision needs REVIEW — no parseable rating.",
+        ))
+        db.commit()
+        return
+    prev = (
+        db.query(Run)
+        .filter(Run.user_id == run.user_id, Run.ticker == run.ticker,
+                Run.status == "done", Run.id != run.id, Run.rating.isnot(None))
+        .order_by(Run.finished_at.desc())
+        .first()
+    )
+    if prev is not None and run.rating and prev.rating != run.rating:
+        db.add(Alert(
+            user_id=run.user_id, run_id=run.id, ticker=run.ticker, type="rating_change",
+            message=f"{run.ticker}: rating changed {prev.rating} → {run.rating} "
+                    f"(previous run {prev.trade_date}, new run {run.trade_date}).",
+        ))
+        db.commit()
+
+
+async def pump_queued_runs(user_id: str | None = None) -> int:
+    """P2 — start queued runs while their owners have free slots. Returns starts."""
+    from ..config import MAX_CONCURRENT_RUNS_PER_USER
+
+    started = 0
+    with SessionLocal() as db:
+        q = db.query(Run).filter(Run.status == "queued").order_by(Run.created_at)
+        if user_id:
+            q = q.filter(Run.user_id == user_id)
+        queued = q.limit(50).all()
+        queued_info = [(r.id, r.user_id) for r in queued]
+    for rid, uid in queued_info:
+        if manager.is_active(rid):
+            continue
+        try:
+            await manager.start(rid, user_id=uid, max_concurrent=MAX_CONCURRENT_RUNS_PER_USER)
+            started += 1
+        except (PermissionError, ValueError):
+            continue
+    return started
 
 
 async def cancel_all_for_user(user_id: str, timeout: float = 6.0) -> None:

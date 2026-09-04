@@ -9,6 +9,9 @@ import Runs from "./pages/Runs";
 import Memory from "./pages/Memory";
 import Settings from "./pages/Settings";
 import Admin from "./pages/Admin";
+import Watchlists from "./pages/Watchlists";
+import Automations from "./pages/Automations";
+import Compare from "./pages/Compare";
 
 const I = {
   home: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"/></svg>,
@@ -18,6 +21,9 @@ const I = {
   gear: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.5-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.5 2 1.5a7 7 0 0 0 0 2.4l-2 1.5 2 3.5 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.5-2-1.5c.07-.4.1-.8.1-1.2z"/></svg>,
   shield: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>,
   chevron: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="m15 6-6 6 6 6"/></svg>,
+  list: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>,
+  bolt: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>,
+  bell: <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" width="16" height="16" stroke="currentColor"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>,
 };
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -25,15 +31,24 @@ function Shell({ children }: { children: React.ReactNode }) {
   const loc = useLocation();
   const [me, setMe] = useState<{ email: string; is_admin: boolean } | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [unread, setUnread] = useState(0);
 
   useEffect(() => {
     api.get<{ email: string; is_admin: boolean }>("/api/auth/me").then(setMe).catch(() => {});
+    const poll = () =>
+      api.get<any[]>("/api/alerts?unread_only=true").then((a) => setUnread(a.length)).catch(() => {});
+    poll();
+    const t = setInterval(poll, 30000);
+    window.addEventListener("agentalgo-alerts-read", poll);
+    return () => { clearInterval(t); window.removeEventListener("agentalgo-alerts-read", poll); };
   }, []);
 
   const links = [
     { to: "/", label: "Dashboard", icon: I.home, end: true },
     { to: "/new", label: "New Analysis", icon: I.play },
+    { to: "/watchlists", label: "Watchlists", icon: I.list },
     { to: "/runs", label: "Run History", icon: I.clock },
+    { to: "/automations", label: "Automations", icon: I.bolt },
     { to: "/memory", label: "Memory", icon: I.brain },
     { to: "/settings", label: "Settings", icon: I.gear },
   ];
@@ -52,6 +67,16 @@ function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         <div className="right">
+          <button className="mode-pill" title="Alerts" style={{ position: "relative" }}
+            onClick={() => nav("/automations")}>
+            {I.bell}
+            {unread > 0 && (
+              <span style={{
+                position: "absolute", top: 0, right: 0, background: "var(--accent)", color: "#fff",
+                borderRadius: 999, fontSize: 10, fontWeight: 800, padding: "1px 5px", lineHeight: "12px",
+              }}>{unread}</span>
+            )}
+          </button>
           <button className="mode-pill" title="Sign out" onClick={() => { setToken(null); nav("/login"); }}>Sign out</button>
           <div className="avatar" title={me?.email || ""}>{(me?.email || "?")[0].toUpperCase()}</div>
         </div>
@@ -98,6 +123,9 @@ export default function App() {
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
       <Route path="/new" element={<Protected><NewAnalysis /></Protected>} />
       <Route path="/runs" element={<Protected><Runs /></Protected>} />
+      <Route path="/watchlists" element={<Protected><Watchlists /></Protected>} />
+      <Route path="/automations" element={<Protected><Automations /></Protected>} />
+      <Route path="/compare" element={<Protected><Compare /></Protected>} />
       <Route path="/runs/:id" element={<Protected><RunLive /></Protected>} />
       <Route path="/memory" element={<Protected><Memory /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
