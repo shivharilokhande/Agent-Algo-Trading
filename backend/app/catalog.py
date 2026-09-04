@@ -142,7 +142,7 @@ PROVIDERS: list[dict] = [
     {"id": "groq", "name": "Groq", "kind": "key", "env": "GROQ_API_KEY"},
     {"id": "nvidia", "name": "NVIDIA NIM", "kind": "key", "env": "NVIDIA_API_KEY"},
     {"id": "ollama", "name": "Ollama (local/remote)", "kind": "url", "env": "OLLAMA_BASE_URL"},
-    {"id": "openai_compatible", "name": "OpenAI-compatible endpoint", "kind": "key+url", "env": "OPENAI_COMPATIBLE_API_KEY"},
+    {"id": "openai_compatible", "name": "OpenAI-compatible / Cowork bridge (free, uses your Claude subscription)", "kind": "key+url", "env": "OPENAI_COMPATIBLE_API_KEY"},
     {"id": "azure", "name": "Azure OpenAI", "kind": "key+url", "env": "AZURE_OPENAI_API_KEY"},
     {"id": "bedrock", "name": "AWS Bedrock", "kind": "aws", "env": "AWS_ACCESS_KEY_ID"},
 ]

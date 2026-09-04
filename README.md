@@ -26,6 +26,24 @@ Multi-user web platform for the [TradingAgents](https://github.com/TauricResearc
 - **Research library** (P4) — ingest real SEC EDGAR 10-K/10-Q filings + index your reports; FTS5 full-text search with BM25 snippets; analyses cite matching passages with point-in-time filtering
 - **Super-admin SaaS dashboard** — platform stats (users, runs, tokens, ratings, top tickers) and user management (promote/demote/delete). Bootstrap account: `AGENTALGO_ADMIN_EMAIL` / `AGENTALGO_ADMIN_PASSWORD` (dev default `admin@agentalgo.dev` / `admin12345` — **change in production**). Admins see a Research/Admin switch in the top bar.
 
+## Free engine runs — Cowork bridge (no API key)
+
+`bridge/cowork_bridge.py` is a local OpenAI-compatible server (port 8765) that routes
+every engine LLM call through the **Claude Code CLI**, so real TradingAgents runs bill
+your existing Claude subscription instead of a metered API key. It emulates tool
+calling and structured output on top of `claude -p`, and neutralizes any global
+`~/.claude` base-URL redirection (Ollama/OpenRouter) via its own `--settings` override —
+your global CLI config is untouched.
+
+One-time setup: `claude setup-token` in Terminal (browser OAuth on your subscription).
+Then in AgentAlgo: Settings → API Keys → *OpenAI-compatible / Cowork bridge* →
+Base URL `http://127.0.0.1:8765/v1` (no secret) → and run analyses in **Live engine**
+mode with provider *OpenAI-compatible*, custom model id `cowork` (or `cowork-haiku`
+for speed). The bridge starts/stops with `backend/run_dev.sh`.
+
+Notes: personal use on your own machine; subscription rate limits apply; the bridge
+listens on 127.0.0.1 only and runs at most 2 concurrent CLI calls.
+
 ## Local development (macOS/Linux)
 
 ```bash
