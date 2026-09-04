@@ -12,12 +12,13 @@ const TEAMS: [string, string[]][] = [
   ["Portfolio", ["Portfolio Manager"]],
 ];
 const SECTION_ORDER = [
-  "market_report", "sentiment_report", "news_report", "fundamentals_report",
-  "custom_report", "investment_plan", "trader_investment_plan", "final_trade_decision",
+  "derivatives_report", "market_report", "sentiment_report", "news_report",
+  "fundamentals_report", "custom_report", "investment_plan",
+  "trader_investment_plan", "final_trade_decision",
 ];
 const SECTION_TITLES: Record<string, string> = {
-  market_report: "Market", sentiment_report: "Sentiment", news_report: "News",
-  fundamentals_report: "Fundamentals", custom_report: "Custom Analysts",
+  derivatives_report: "F&O", market_report: "Market", sentiment_report: "Sentiment",
+  news_report: "News", fundamentals_report: "Fundamentals", custom_report: "Custom Analysts",
   investment_plan: "Research Decision",
   trader_investment_plan: "Trader Plan", final_trade_decision: "Final Decision",
 };

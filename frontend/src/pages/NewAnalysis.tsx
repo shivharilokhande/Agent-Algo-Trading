@@ -176,6 +176,7 @@ export default function NewAnalysis() {
                 ✓ <b>{preview.name}</b> · {preview.symbol} · {preview.asset_type}
                 {preview.exchange && <> · {preview.exchange}</>}
                 {preview.currency && <> · {preview.currency}</>} · benchmark {preview.benchmark}
+                {preview.fno_symbol && <> · <b style={{ color: "var(--accent)" }}>F&O ✓</b> (live NSE option chain will be analyzed)</>}
               </p>
             )}
             {previewErr && <p style={{ color: "var(--red)", marginBottom: 0 }}>{previewErr}</p>}

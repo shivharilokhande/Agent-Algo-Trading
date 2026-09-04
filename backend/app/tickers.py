@@ -44,11 +44,21 @@ def crypto_base(raw: str) -> str | None:
     return None
 
 
+# F&O: friendly index aliases → Yahoo Finance index tickers
+INDEX_ALIASES = {
+    "NIFTY": "^NSEI", "NIFTY50": "^NSEI",
+    "BANKNIFTY": "^NSEBANK", "NIFTYBANK": "^NSEBANK",
+    "SENSEX": "^BSESN",
+}
+
+
 def normalize_ticker(raw: str) -> str:
-    """BTCUSD/btc-usdt → BTC-USD; aapl → AAPL. Raises ValueError when invalid."""
+    """BTCUSD/btc-usdt → BTC-USD; NIFTY → ^NSEI; aapl → AAPL."""
     s = raw.strip().upper()
     if not s:
         raise ValueError("Ticker is required")
+    if s in INDEX_ALIASES:
+        return INDEX_ALIASES[s]
     base = crypto_base(s)
     if base:
         return f"{base}-USD"
@@ -58,6 +68,8 @@ def normalize_ticker(raw: str) -> str:
 
 
 def detect_asset_type(ticker: str) -> str:
+    if ticker.startswith("^"):
+        return "index"
     return "crypto" if crypto_base(ticker) else "stock"
 
 
@@ -71,8 +83,8 @@ def resolve_benchmark(ticker: str, override: str | None = None) -> str:
 
 
 def filter_analysts_for_asset_type(analysts: list[str], asset_type: str) -> list[str]:
-    """Fundamentals doesn't apply to crypto (engine parity)."""
-    if asset_type == "crypto":
+    """Fundamentals doesn't apply to crypto (engine parity) or to indices (F&O)."""
+    if asset_type in ("crypto", "index"):
         return [a for a in analysts if a != "fundamentals"]
     return analysts
 

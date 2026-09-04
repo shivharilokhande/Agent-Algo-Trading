@@ -108,6 +108,11 @@ async def run_demo(
             await tool(agent, tname, {"symbol": ticker, "curr_date": trade_date, **targs})
         content = _analyst_report(key, ticker, trade_date, price, rsi, macd_sig, trend, sentiment, rng)
         content += persona_note(agent)
+        if key == "market" and config.get("_fno_context"):
+            content += ("\n\n#### Derivatives context (LIVE NSE data)\n\n"
+                        + config["_fno_context"]
+                        + "\n\n_The simulated technical read above should be weighed against "
+                          "this real option-chain positioning._")
         if key == "fundamentals" and config.get("_grounding"):  # P4-A4 citations
             cites = "\n".join(
                 f"> 📄 **{g['title']}** — “{g['snippet'][:220]}” "

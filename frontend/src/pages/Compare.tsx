@@ -5,8 +5,9 @@ import { marked } from "marked";
 import { api, RunOut } from "../api";
 
 const SECTIONS = [
-  ["market_report", "Market"], ["sentiment_report", "Sentiment"], ["news_report", "News"],
-  ["fundamentals_report", "Fundamentals"], ["investment_plan", "Research Decision"],
+  ["derivatives_report", "F&O"], ["market_report", "Market"], ["sentiment_report", "Sentiment"],
+  ["news_report", "News"], ["fundamentals_report", "Fundamentals"],
+  ["custom_report", "Custom Analysts"], ["investment_plan", "Research Decision"],
   ["trader_investment_plan", "Trader Plan"], ["final_trade_decision", "Final Decision"],
 ] as const;
 

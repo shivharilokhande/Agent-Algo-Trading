@@ -76,6 +76,8 @@ def main() -> int:
 
     selected_analysts = cfg_in.get("analysts") or ANALYST_ORDER
     asset_type = cfg_in.get("asset_type", "stock")
+    if asset_type == "index":
+        asset_type = "stock"  # engine knows stock|crypto; indices ride the stock pipeline
 
     stats = {"llm_calls": 0, "tool_calls": 0, "tokens_in": 0, "tokens_out": 0}
 
@@ -105,6 +107,15 @@ def main() -> int:
     graph = TradingAgentsGraph(selected_analysts=selected_analysts, config=config, debug=False)
 
     instrument_context = graph.resolve_instrument_context(ticker, asset_type)
+    # F&O: derivatives snapshot travels with the instrument identity so EVERY
+    # agent grounds its view in live option-chain positioning
+    if cfg_in.get("_fno_context"):
+        instrument_context += (
+            "\n\nLive NSE derivatives positioning for this instrument (option chain):\n"
+            + cfg_in["_fno_context"]
+            + "\nIncorporate PCR, max pain, OI support/resistance, and IV into the "
+              "technical and risk assessment where relevant."
+        )
     out({"type": "message", "agent": "", "payload": {"kind": "system", "text": f"Instrument resolved: {instrument_context[:300]}"}})
 
     past_context = ""

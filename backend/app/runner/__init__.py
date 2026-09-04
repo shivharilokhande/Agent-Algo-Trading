@@ -31,6 +31,7 @@ ANALYST_AGENT = {
 }
 
 SECTION_TITLES = {
+    "derivatives_report": "F&O / Derivatives",
     "custom_report": "Custom Analysts",
     "market_report": "Market Analysis",
     "sentiment_report": "Social Sentiment",
@@ -258,6 +259,28 @@ class RunManager:
                 benchmark = run.benchmark
 
             await self.emit(handle, "run_status", payload={"status": "running", "resumed": resume})
+
+            # F&O: live NSE derivatives snapshot, shared by both run modes
+            if config.get("_fno_symbol") and "derivatives_report" not in (
+                completed_sections(run_id) if resume else set()
+            ):
+                try:
+                    from ..fno import get_fno_snapshot, snapshot_to_md
+
+                    await self.emit(handle, "tool_call", agent="Market Analyst",
+                                    payload={"tool": "get_nse_option_chain",
+                                             "args": {"symbol": config["_fno_symbol"]}})
+                    snap = await asyncio.wait_for(
+                        get_fno_snapshot(config["_fno_symbol"]), timeout=30
+                    )
+                    config["_fno_context"] = snapshot_to_md(snap)
+                    await self.save_report(handle, "derivatives_report", config["_fno_context"])
+                except Exception as exc:  # noqa: BLE001 — F&O data must never block a run
+                    log.info("F&O snapshot unavailable (%s): %s", config.get("_fno_symbol"), exc)
+                    await self.emit(handle, "message", agent="Market Analyst", payload={
+                        "kind": "system",
+                        "text": f"NSE F&O snapshot unavailable ({exc.__class__.__name__}) — continuing without derivatives context.",
+                    })
 
             if mode == "engine":
                 from .engine import run_engine

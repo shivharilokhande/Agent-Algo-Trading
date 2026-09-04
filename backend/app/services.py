@@ -132,6 +132,16 @@ def build_run(db: Session, user_id: str, cfg: dict) -> Run:
     if customs:
         config["_custom_analysts"] = customs
 
+    # F&O: NSE derivatives snapshot for indices and .NS stocks (best effort)
+    try:
+        from .fno import fno_symbol_for
+
+        fno_symbol = fno_symbol_for(ticker)
+        if fno_symbol:
+            config["_fno_symbol"] = fno_symbol  # runners fetch the live snapshot
+    except Exception:  # pragma: no cover
+        pass
+
     # P4-A4: grounded citations from the research library (as-of filtered)
     try:
         from .library import grounding_context

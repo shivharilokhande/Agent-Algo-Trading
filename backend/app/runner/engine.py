@@ -125,7 +125,11 @@ async def run_engine(
     env["TRADINGAGENTS_RESULTS_DIR"] = str(user_dir / "logs")
     env["PYTHONUNBUFFERED"] = "1"
 
-    payload = json.dumps({"config": config, "ticker": ticker, "trade_date": trade_date, "resume": resume})
+    # strip non-serializable/None leftovers defensively, then hand the worker everything
+    payload = json.dumps(
+        {"config": config, "ticker": ticker, "trade_date": trade_date, "resume": resume},
+        default=str,
+    )
 
     proc = await asyncio.create_subprocess_exec(
         sys.executable,

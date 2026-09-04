@@ -92,13 +92,15 @@ def options():
 
 @router.get("/ticker/{raw}")
 def ticker_preview(raw: str, user: Annotated[User, Depends(get_current_user)]):
-    """F3.1 — normalize + instrument identity preview."""
+    """F3.1 — normalize + instrument identity preview (+ F&O availability)."""
     try:
         symbol = normalize_ticker(raw)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     asset_type = detect_asset_type(symbol)
     name, exchange, currency = _identity(symbol, asset_type)
+    from ..fno import fno_symbol_for
+
     return {
         "symbol": symbol,
         "asset_type": asset_type,
@@ -106,7 +108,26 @@ def ticker_preview(raw: str, user: Annotated[User, Depends(get_current_user)]):
         "name": name,
         "exchange": exchange,
         "currency": currency,
+        "fno_symbol": fno_symbol_for(symbol),  # non-null ⇒ NSE derivatives exist
     }
+
+
+@router.get("/fno/{raw}")
+async def fno_preview(raw: str, user: Annotated[User, Depends(get_current_user)]):
+    """Live NSE option-chain snapshot (PCR, max pain, OI levels, IV, VIX)."""
+    from ..fno import fno_symbol_for, get_fno_snapshot
+
+    try:
+        symbol = normalize_ticker(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    fno_symbol = fno_symbol_for(symbol)
+    if fno_symbol is None:
+        raise HTTPException(status_code=422, detail=f"No NSE derivatives for {symbol}")
+    try:
+        return await get_fno_snapshot(fno_symbol)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"NSE F&O data unavailable: {exc}") from exc
 
 
 def _identity(symbol: str, asset_type: str) -> tuple[str, str, str]:

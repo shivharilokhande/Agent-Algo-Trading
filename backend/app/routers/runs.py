@@ -19,8 +19,9 @@ from ..security import create_stream_ticket, decode_stream_ticket, get_current_u
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
 _REPORT_ORDER = [
-    "market_report", "sentiment_report", "news_report", "fundamentals_report",
-    "custom_report", "investment_plan", "trader_investment_plan", "final_trade_decision",
+    "derivatives_report", "market_report", "sentiment_report", "news_report",
+    "fundamentals_report", "custom_report", "investment_plan",
+    "trader_investment_plan", "final_trade_decision",
 ]
 
 
