@@ -109,6 +109,11 @@ def main() -> int:
     instrument_context = graph.resolve_instrument_context(ticker, asset_type)
     # F&O: derivatives snapshot travels with the instrument identity so EVERY
     # agent grounds its view in live option-chain positioning
+    if cfg_in.get("_briefing_context"):
+        instrument_context += (
+            "\n\nDesk briefing book for this instrument (your own prior notes — weigh "
+            "levels that held or broke):\n" + cfg_in["_briefing_context"]
+        )
     if cfg_in.get("_fno_context"):
         instrument_context += (
             "\n\nLive NSE derivatives positioning for this instrument (option chain):\n"

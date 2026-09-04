@@ -143,6 +143,33 @@ def get_ensemble(
     return _ensemble_out(db, ens)
 
 
+@router.get("/desk-review")
+def get_desk_review(user: Annotated[User, Depends(get_current_user)]):
+    """Borrow #2 — per-agent KPI table (hit rate vs resolved outcomes)."""
+    from ..desk import desk_review
+
+    return desk_review(user.id)
+
+
+@router.get("/briefings/{ticker}")
+def get_briefing(
+    ticker: str,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    from ..models import Briefing
+
+    try:
+        symbol = normalize_ticker(ticker)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    row = (db.query(Briefing)
+           .filter(Briefing.user_id == user.id, Briefing.ticker == symbol)
+           .one_or_none())
+    return {"ticker": symbol, "content": row.content if row else "",
+            "updated_at": row.updated_at if row else None}
+
+
 @router.get("/scoreboard")
 def scoreboard(
     user: Annotated[User, Depends(get_current_user)],

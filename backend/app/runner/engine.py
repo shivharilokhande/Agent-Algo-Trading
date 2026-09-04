@@ -165,11 +165,16 @@ async def run_engine(
             if mtype == "report_section":
                 content = msg.get("content_md", "")
                 if msg["section"] == "fno_trade_card" and config.get("_fno_snapshot"):
-                    # honesty pass: conditional rows must quote at-trigger premiums
+                    # honesty pass (at-trigger premiums) + position sizing
                     try:
-                        from ..fno import sanitize_card_rows
+                        from ..fno import enrich_card_sizing, sanitize_card_rows
+                        from ..models import Setting
 
                         card = sanitize_card_rows(json.loads(content), config["_fno_snapshot"])
+                        with SessionLocal() as db:
+                            srow = db.get(Setting, user_id)
+                            scfg = json.loads(srow.config_json) if srow else {}
+                        card = enrich_card_sizing(card, scfg)
                         content = json.dumps(card)
                     except Exception:  # noqa: BLE001 — never lose the card over this
                         pass

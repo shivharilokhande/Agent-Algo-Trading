@@ -25,9 +25,9 @@ def detach_run_references(db: Session, run_id: str) -> None:
     """Null out soft references so a run can be deleted under FK enforcement."""
     import json as _json
 
-    from .models import Alert, Ensemble, MemoryEntry, PaperPosition
+    from .models import AgentCall, Alert, Ensemble, MemoryEntry, PaperPosition
 
-    for model in (MemoryEntry, Alert, PaperPosition):
+    for model in (MemoryEntry, Alert, PaperPosition, AgentCall):
         db.query(model).filter(model.run_id == run_id).update({"run_id": None})
     # R3-1: invalidate cached consensus for ensembles that referenced this run.
     # run_ids_json keeps the original id (it's a soft JSON reference, no FK) so the
@@ -46,8 +46,8 @@ def purge_user_data(db: Session, user_id: str) -> None:
     from sqlalchemy import bindparam, text as sql
 
     from .models import (
-        AgentProfile, Alert, Document, Ensemble, MemoryEntry, PaperPosition,
-        Preset, Schedule, Setting, Trigger, Watchlist,
+        AgentCall, AgentProfile, Alert, Briefing, Document, Ensemble, MemoryEntry,
+        PaperPosition, Preset, Schedule, Setting, Trigger, Watchlist,
     )
 
     # drop FTS rows for the user's documents first (R3-10: parameterized, chunked)
@@ -57,8 +57,8 @@ def purge_user_data(db: Session, user_id: str) -> None:
     )
     for i in range(0, len(doc_ids), 200):
         db.execute(stmt, {"ids": doc_ids[i:i + 200]})
-    for model in (Alert, PaperPosition, MemoryEntry, Preset, Setting, Watchlist,
-                  Schedule, Trigger, AgentProfile, Document, Ensemble):
+    for model in (Alert, PaperPosition, MemoryEntry, AgentCall, Briefing, Preset,
+                  Setting, Watchlist, Schedule, Trigger, AgentProfile, Document, Ensemble):
         db.query(model).filter(model.user_id == user_id).delete()
 
 
@@ -110,6 +110,14 @@ def build_run(db: Session, user_id: str, cfg: dict) -> Run:
     config["analysts"] = analysts
     config["asset_type"] = asset_type
     config["_memory_context"] = past_memory_context(user_id, ticker)
+    try:  # Borrow #3: the instrument's briefing book rides along
+        from .desk import briefing_context
+
+        briefing = briefing_context(user_id, ticker)
+        if briefing:
+            config["_briefing_context"] = briefing
+    except Exception:  # pragma: no cover
+        pass
     if defaults.get("data_vendors") and not config.get("data_vendors"):
         config["data_vendors"] = defaults["data_vendors"]
 

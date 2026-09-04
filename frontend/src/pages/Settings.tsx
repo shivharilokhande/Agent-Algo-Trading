@@ -177,6 +177,16 @@ export default function Settings() {
             </select>
           </div>
           <div>
+            <label>Trading capital (₹) — for F&O position sizing</label>
+            <input value={defaults.trading_capital ?? ""} placeholder="100000"
+              onChange={(e) => setDefaults({ ...defaults, trading_capital: e.target.value === "" ? undefined : +e.target.value })} />
+          </div>
+          <div>
+            <label>Risk per trade (%) — of capital, entry→SL</label>
+            <input value={defaults.risk_per_trade_pct ?? ""} placeholder="1.0"
+              onChange={(e) => setDefaults({ ...defaults, risk_per_trade_pct: e.target.value === "" ? undefined : +e.target.value })} />
+          </div>
+          <div>
             <label>Benchmark override (blank = auto)</label>
             <input value={defaults.benchmark_ticker ?? ""} placeholder="e.g. QQQ"
               onChange={(e) => setDefaults({ ...defaults, benchmark_ticker: e.target.value || undefined })} />

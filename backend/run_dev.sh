@@ -40,4 +40,10 @@ PYEOF
   status)
     pgrep -fl "uvicorn app.main:app" || echo "not running"
     ;;
+  restart)
+    "$0" stop; sleep 2; "$0" start
+    ;;
+  *)
+    echo "usage: $0 start|stop|status|restart"; exit 1
+    ;;
 esac

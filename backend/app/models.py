@@ -283,6 +283,37 @@ class PaperPosition(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class Briefing(Base):
+    """Borrow #3 — per-instrument briefing book (persistent desk memory)."""
+
+    __tablename__ = "briefings"
+    __table_args__ = (UniqueConstraint("user_id", "ticker", name="uq_user_briefing"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    ticker: Mapped[str] = mapped_column(String(24), index=True)
+    content: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class AgentCall(Base):
+    """Borrow #2 — one agent's directional proposal in one run, graded on resolution."""
+
+    __tablename__ = "agent_calls"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True, index=True)
+    ticker: Mapped[str] = mapped_column(String(24))
+    agent: Mapped[str] = mapped_column(String(48))
+    call: Mapped[str] = mapped_column(String(16))  # Buy/Overweight/Hold/Underweight/Sell
+    correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)  # None until graded
+    alpha: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class MemoryEntry(Base):
     """Decision-log entry with pending → resolved lifecycle (F8)."""
 

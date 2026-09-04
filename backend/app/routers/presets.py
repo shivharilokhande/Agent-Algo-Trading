@@ -38,6 +38,9 @@ _SETTING_VALIDATORS: dict[str, type | tuple] = {
     "paper_trading": bool,
     "paper_notional": (int, float),
     "hitl": bool,
+    "trading_capital": (int, float),
+    "risk_per_trade_pct": (int, float),
+    "fno_lot_sizes": dict,
 }
 
 

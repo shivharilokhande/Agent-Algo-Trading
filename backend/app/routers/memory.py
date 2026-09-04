@@ -130,6 +130,12 @@ async def resolve_entry_core(db, entry: MemoryEntry, min_days: int = MIN_RESOLVE
     entry.status = "resolved"
     entry.resolved_at = datetime.now(timezone.utc)
     db.commit()
+    try:  # Borrow #2: grade every agent's call for this run
+        from ..desk import grade_agent_calls
+
+        grade_agent_calls(entry.run_id, entry.alpha)
+    except Exception:  # noqa: BLE001 — grading must never fail a resolve
+        pass
     return entry
 
 

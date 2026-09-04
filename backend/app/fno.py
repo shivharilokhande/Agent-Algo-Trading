@@ -455,6 +455,65 @@ def build_trade_card(snap: dict, rating: str, ticker: str) -> dict:
     return card
 
 
+# ---------- position sizing (fixed-fractional, ScalpX/ai-fund inspired) ----------
+
+# NSE F&O lot sizes — REVISED PERIODICALLY BY NSE; users must verify with their
+# broker (surfaced in the UI). Override via settings key `fno_lot_sizes`.
+# NSE circular NSE/FAOP/70616 — revised lots effective the Jan-2026 contract series.
+DEFAULT_LOT_SIZES = {
+    "NIFTY": 65, "BANKNIFTY": 30, "FINNIFTY": 60, "MIDCPNIFTY": 120, "NIFTYNXT50": 25,
+}
+DEFAULT_CAPITAL = 100_000.0
+DEFAULT_RISK_PCT = 1.0        # % of capital risked per trade (entry→SL)
+MAX_OUTLAY_PCT = 30.0         # ScalpX-style allocation cap on total premium
+
+
+def size_position(ep: float, sl: float, lot_size: int | None,
+                  capital: float, risk_pct: float) -> dict:
+    """Fixed-fractional sizing: lots = risk budget ÷ risk per lot, capped by outlay."""
+    risk_budget = round(capital * risk_pct / 100, 2)
+    per_unit_risk = max(ep - sl, 0.01)
+    out: dict = {"capital": capital, "risk_pct": risk_pct, "risk_budget": risk_budget}
+    if not lot_size:
+        out.update({"lots": None,
+                    "note": f"risk ₹{per_unit_risk:.2f}/unit — set the lot size to get lot count"})
+        return out
+    risk_per_lot = round(per_unit_risk * lot_size, 2)
+    lots = int(risk_budget // risk_per_lot) if risk_per_lot else 0
+    # outlay cap: never deploy more than MAX_OUTLAY_PCT of capital in premium
+    max_outlay = capital * MAX_OUTLAY_PCT / 100
+    while lots > 0 and ep * lot_size * lots > max_outlay:
+        lots -= 1
+    out.update({
+        "lot_size": lot_size,
+        "lots": lots,
+        "risk_per_lot": risk_per_lot,
+        "max_loss": round(risk_per_lot * lots, 2),
+        "premium_outlay": round(ep * lot_size * lots, 2),
+        "outlay_pct": round(ep * lot_size * lots / capital * 100, 1) if capital else None,
+    })
+    if lots == 0:
+        out["note"] = (f"risk/lot ₹{risk_per_lot:,.0f} exceeds the ₹{risk_budget:,.0f} "
+                       "budget — 0 lots; raise risk % or skip")
+    return out
+
+
+def enrich_card_sizing(card: dict, settings_cfg: dict) -> dict:
+    """Attach a sizing block to every card row from the user's capital settings."""
+    capital = float(settings_cfg.get("trading_capital") or DEFAULT_CAPITAL)
+    risk_pct = float(settings_cfg.get("risk_per_trade_pct") or DEFAULT_RISK_PCT)
+    overrides = settings_cfg.get("fno_lot_sizes") or {}
+    symbol = str(card.get("symbol", "")).upper()
+    lot = overrides.get(symbol) or DEFAULT_LOT_SIZES.get(symbol)
+    for row in card.get("rows", []):
+        ep, sl = row.get("ep"), row.get("sl")
+        if ep and sl and ep > sl:
+            row["sizing"] = size_position(float(ep), float(sl), lot, capital, risk_pct)
+    card["sizing_basis"] = {"capital": capital, "risk_pct": risk_pct, "lot_size": lot,
+                            "lot_note": "verify current NSE lot size with your broker"}
+    return card
+
+
 def sanitize_card_rows(card: dict, snap: dict) -> dict:
     """Make conditional rows honest: a row that triggers at a different spot level
     must quote the DELTA-ADJUSTED premium at that level, never today's LTP.

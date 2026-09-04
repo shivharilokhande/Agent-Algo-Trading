@@ -4,12 +4,14 @@ import { api, MemoryOut } from "../api";
 export default function Memory() {
   const [entries, setEntries] = useState<MemoryOut[]>([]);
   const [stats, setStats] = useState<any>(null);
+  const [desk, setDesk] = useState<any[]>([]);
   const [busy, setBusy] = useState<string>("");
   const [err, setErr] = useState("");
 
   async function load() {
     setEntries(await api.get<MemoryOut[]>("/api/memory"));
     setStats(await api.get("/api/memory/stats"));
+    setDesk(await api.get<any[]>("/api/desk-review").catch(() => []) as any[]);
   }
   useEffect(() => { load(); }, []);
 
@@ -51,6 +53,33 @@ export default function Memory() {
       )}
 
       {err && <div className="error-box">{err}</div>}
+
+      {desk.length > 0 && (
+        <div className="card">
+          <h3>Desk Review <span className="muted">— agents graded against realized alpha (ai-fund-style KPI review)</span></h3>
+          <table>
+            <thead><tr><th>Agent</th><th>Graded calls</th><th>Hit rate</th><th>Avg alpha</th><th>Bias (bull/bear/hold)</th><th>Verdict</th></tr></thead>
+            <tbody>
+              {desk.map((a) => (
+                <tr key={a.agent}>
+                  <td><b>{a.agent}</b></td>
+                  <td>{a.graded}</td>
+                  <td className="mono" style={{ color: a.hit_rate >= 0.5 ? "var(--green)" : "var(--red)" }}>
+                    {(a.hit_rate * 100).toFixed(0)}%
+                  </td>
+                  <td className="mono">{(a.avg_alpha_when_called * 100).toFixed(2)}%</td>
+                  <td className="muted">{a.bias.bullish}/{a.bias.bearish}/{a.bias.hold}</td>
+                  <td><span className={`pill ${a.verdict === "ok" ? "done" : a.verdict === "watch" ? "interrupted" : "failed"}`}>
+                    {a.verdict}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            "bench" agents (≥5 calls, &lt;40% hit rate) are candidates for a persona rewrite in Agent Studio.
+          </p>
+        </div>
+      )}
 
       <div className="card">
         <table>

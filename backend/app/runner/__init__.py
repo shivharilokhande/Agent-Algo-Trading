@@ -316,9 +316,16 @@ class RunManager:
                 try:
                     from ..fno import build_trade_card
 
+                    from ..fno import enrich_card_sizing
+                    from ..models import Setting
+
                     card = build_trade_card(config["_fno_snapshot"],
                                             result.get("rating") or "REVIEW", ticker)
                     card["mode"] = mode  # demo cards get a SIMULATED watermark in the UI
+                    with SessionLocal() as db:
+                        srow = db.get(Setting, user_id)
+                        cfg = json.loads(srow.config_json) if srow else {}
+                    card = enrich_card_sizing(card, cfg)
                     await self.save_report(handle, "fno_trade_card", json.dumps(card))
                 except Exception:  # noqa: BLE001
                     log.exception("Trade card failed")
@@ -329,7 +336,6 @@ class RunManager:
                     arm_level_watch(run_id, user_id, config.get("_fno_symbol", ticker))
                 except Exception:  # noqa: BLE001
                     log.exception("Level watch arming failed")
-
             with SessionLocal() as db:
                 run = db.get(Run, run_id)
                 run.status = "done"
@@ -352,6 +358,22 @@ class RunManager:
                 )
                 db.commit()
                 maybe_create_alert(db, run)  # P2.3
+            # Borrow #2/#3: record per-agent calls + append the instrument briefing book
+            # (after the final commit so the briefing sees the persisted rating)
+            try:
+                from ..desk import append_briefing, briefing_entry_for_run, record_agent_calls
+
+                record_agent_calls(run_id)
+                with SessionLocal() as db:
+                    run_row = db.get(Run, run_id)
+                    card_row = (db.query(RunReport)
+                                .filter(RunReport.run_id == run_id,
+                                        RunReport.section == "fno_trade_card")
+                                .one_or_none())
+                card_obj = json.loads(card_row.content_md) if card_row else None
+                append_briefing(user_id, ticker, briefing_entry_for_run(run_row, card_obj))
+            except Exception:  # noqa: BLE001
+                log.exception("Desk bookkeeping failed")
             # P3-A2: paper-trading hook (own session; must never fail the run)
             try:
                 from ..paper import execute_decision

@@ -99,7 +99,7 @@ function TradeCard({ card }: { card: any }) {
       {card.rows.length > 0 && (
         <table>
           <thead>
-            <tr><th>When</th><th>Buy</th><th>Entry (EP)</th><th>Stop Loss</th><th>Target 1</th><th>Target 2</th><th>R:R</th></tr>
+            <tr><th>When</th><th>Buy</th><th>Entry (EP)</th><th>Stop Loss</th><th>Target 1</th><th>Target 2</th><th>R:R</th><th>Size</th></tr>
           </thead>
           <tbody>
             {card.rows.map((r: any, i: number) => (
@@ -114,6 +114,19 @@ function TradeCard({ card }: { card: any }) {
                 <td className="mono" style={{ color: "var(--green)" }}>₹{r.tp1}</td>
                 <td className="mono" style={{ color: "var(--green)" }}>₹{r.tp2}</td>
                 <td className="mono">1:{r.rr1} / 1:{r.rr2}</td>
+                <td>
+                  {r.sizing ? (
+                    r.sizing.lots !== null && r.sizing.lots !== undefined ? (
+                      r.sizing.lots > 0 ? (
+                        <div style={{ fontSize: 12 }}>
+                          <b>{r.sizing.lots} lot{r.sizing.lots > 1 ? "s" : ""}</b> × {r.sizing.lot_size}
+                          <div className="muted">outlay ₹{Number(r.sizing.premium_outlay).toLocaleString("en-IN")} ({r.sizing.outlay_pct}%)</div>
+                          <div style={{ color: "var(--red)" }}>max loss ₹{Number(r.sizing.max_loss).toLocaleString("en-IN")}</div>
+                        </div>
+                      ) : <span className="pill failed" style={{ fontSize: 11 }}>0 lots — risk/lot &gt; budget</span>
+                    ) : <span className="muted" style={{ fontSize: 11 }}>{r.sizing.note}</span>
+                  ) : <span className="muted">—</span>}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -121,7 +134,12 @@ function TradeCard({ card }: { card: any }) {
       )}
       <p className="disclaimer" style={{ padding: 0, marginTop: 8 }}>
         Take at most one row, only when its condition is met on a closing basis. Premiums are estimates at trigger —
-        re-check the live chain. Research, not advice · lot sizes & margins per your broker.
+        re-check the live chain. Research, not advice.
+        {card.sizing_basis && (
+          <> Sizing: ₹{Number(card.sizing_basis.capital).toLocaleString("en-IN")} capital ·
+          {" "}{card.sizing_basis.risk_pct}% risk/trade · lot {card.sizing_basis.lot_size ?? "?"} —
+          <b> verify current NSE lot size with your broker</b> (change in Settings).</>
+        )}
       </p>
     </div>
   );
