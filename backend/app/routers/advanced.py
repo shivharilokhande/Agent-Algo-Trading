@@ -170,6 +170,78 @@ def get_briefing(
             "updated_at": row.updated_at if row else None}
 
 
+# ==================== Scalp Mode ====================
+
+@router.get("/scalp/signals")
+def scalp_signals(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    from ..models import ScalpSignal
+
+    rows = (db.query(ScalpSignal).filter(ScalpSignal.user_id == user.id)
+            .order_by(ScalpSignal.created_at.desc()).limit(50).all())
+    return [{"id": r.id, "symbol": r.symbol, "rule": r.rule, "direction": r.direction,
+             "instrument": r.instrument, "simulated": r.simulated,
+             "created_at": r.created_at, **json.loads(r.payload_json or "{}")}
+            for r in rows]
+
+
+@router.get("/scalp/status")
+async def scalp_status(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from ..fno import is_market_hours_ist
+    from ..models import Setting
+    from ..scalp import SCALP_POLL_SECONDS, day_bias, theta_cutoff_passed
+
+    srow = db.get(Setting, user.id)
+    cfg = json.loads(srow.config_json) if srow else {}
+    symbols = cfg.get("scalp_symbols") or ["NIFTY"]
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    return {
+        "enabled": bool(cfg.get("scalp_enabled")),
+        "symbols": symbols,
+        "market_open": is_market_hours_ist(),
+        "theta_cutoff": theta_cutoff_passed(now_ist),
+        "poll_seconds": SCALP_POLL_SECONDS,
+        "bias": {s: day_bias(user.id, s) for s in symbols},
+    }
+
+
+@router.post("/scalp/simulate", status_code=201)
+async def scalp_simulate(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Emit one SIMULATED signal from the live chain so the UI/flow can be tested
+    outside market hours. Clearly watermarked; never sends a desktop notification."""
+    from ..fno import get_fno_snapshot
+    from ..models import Setting
+    from ..scalp import build_scalp_signal, emit_signal
+
+    srow = db.get(Setting, user.id)
+    cfg = json.loads(srow.config_json) if srow else {}
+    symbol = (cfg.get("scalp_symbols") or ["NIFTY"])[0]
+    try:
+        snapshot = await get_fno_snapshot(symbol)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Chain unavailable: {exc}") from exc
+    hit = {"rule": "ORB", "direction": "CE",
+           "why": "SIMULATED — sample signal for flow testing, not a market setup"}
+    sig = build_scalp_signal(symbol, hit, snapshot, cfg)
+    if sig is None:
+        raise HTTPException(status_code=502, detail="No scalp-band strike in the chain right now")
+    rid = emit_signal(user.id, sig, simulated=True)
+    if rid is None:
+        raise HTTPException(status_code=409, detail="Cooldown active — a recent signal exists")
+    return {"id": rid, **sig, "simulated": True}
+
+
 @router.get("/scoreboard")
 def scoreboard(
     user: Annotated[User, Depends(get_current_user)],

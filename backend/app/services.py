@@ -47,7 +47,7 @@ def purge_user_data(db: Session, user_id: str) -> None:
 
     from .models import (
         AgentCall, AgentProfile, Alert, Briefing, Document, Ensemble, MemoryEntry,
-        PaperPosition, Preset, Schedule, Setting, Trigger, Watchlist,
+        PaperPosition, Preset, ScalpSignal, Schedule, Setting, Trigger, Watchlist,
     )
 
     # drop FTS rows for the user's documents first (R3-10: parameterized, chunked)
@@ -57,7 +57,7 @@ def purge_user_data(db: Session, user_id: str) -> None:
     )
     for i in range(0, len(doc_ids), 200):
         db.execute(stmt, {"ids": doc_ids[i:i + 200]})
-    for model in (Alert, PaperPosition, MemoryEntry, AgentCall, Briefing, Preset,
+    for model in (Alert, PaperPosition, MemoryEntry, AgentCall, Briefing, ScalpSignal, Preset,
                   Setting, Watchlist, Schedule, Trigger, AgentProfile, Document, Ensemble):
         db.query(model).filter(model.user_id == user_id).delete()
 

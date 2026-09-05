@@ -258,11 +258,14 @@ async def lifespan(app: FastAPI):
     from .runner import pump_queued_runs
 
     await pump_queued_runs()  # P2: restart anything that was waiting for a slot
+    from .scalp import scalp_loop
+
     jobs = [
         asyncio.create_task(_auto_resolution_loop()),
         asyncio.create_task(_schedule_loop()),
         asyncio.create_task(_trigger_loop()),
         asyncio.create_task(_level_watch_loop()),
+        asyncio.create_task(scalp_loop()),
     ]
     yield
     for job in jobs:

@@ -41,6 +41,9 @@ _SETTING_VALIDATORS: dict[str, type | tuple] = {
     "trading_capital": (int, float),
     "risk_per_trade_pct": (int, float),
     "fno_lot_sizes": dict,
+    "scalp_enabled": bool,
+    "scalp_symbols": list,
+    "scalp_risk_pct": (int, float),
 }
 
 

@@ -298,6 +298,22 @@ class Briefing(Base):
     )
 
 
+class ScalpSignal(Base):
+    """Scalp Mode — one fast-lane intraday signal (research only, never an order)."""
+
+    __tablename__ = "scalp_signals"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    symbol: Mapped[str] = mapped_column(String(24), index=True)   # NIFTY / BANKNIFTY / ...
+    rule: Mapped[str] = mapped_column(String(24))                 # ORB / VWAP_RECLAIM / WALL_REJECT
+    direction: Mapped[str] = mapped_column(String(4))             # CE / PE
+    instrument: Mapped[str] = mapped_column(String(48))
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    simulated: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AgentCall(Base):
     """Borrow #2 — one agent's directional proposal in one run, graded on resolution."""
 

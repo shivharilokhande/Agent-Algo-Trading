@@ -14,6 +14,7 @@ import Automations from "./pages/Automations";
 import Compare from "./pages/Compare";
 import Portfolio from "./pages/Portfolio";
 import FnoDesk from "./pages/FnoDesk";
+import Scalp from "./pages/Scalp";
 import Ensemble from "./pages/Ensemble";
 import Studio from "./pages/Studio";
 import Research from "./pages/Research";
@@ -57,6 +58,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     { to: "/", label: "Dashboard", icon: I.home, end: true },
     { to: "/new", label: "New Analysis", icon: I.play },
     { to: "/fno", label: "F&O Desk", icon: I.candle },
+    { to: "/scalp", label: "Scalp", icon: I.bolt },
     { to: "/watchlists", label: "Watchlists", icon: I.list },
     { to: "/runs", label: "Run History", icon: I.clock },
     { to: "/automations", label: "Automations", icon: I.bolt },
@@ -138,6 +140,7 @@ export default function App() {
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
       <Route path="/new" element={<Protected><NewAnalysis /></Protected>} />
       <Route path="/fno" element={<Protected><FnoDesk /></Protected>} />
+      <Route path="/scalp" element={<Protected><Scalp /></Protected>} />
       <Route path="/runs" element={<Protected><Runs /></Protected>} />
       <Route path="/watchlists" element={<Protected><Watchlists /></Protected>} />
       <Route path="/automations" element={<Protected><Automations /></Protected>} />

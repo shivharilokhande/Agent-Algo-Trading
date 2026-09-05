@@ -1,0 +1,113 @@
+"""Scalp Mode — indicator math, rule evaluation, bias filter, API surface."""
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def _bars(closes, base_vol=1000.0):
+    """Synthetic 1m bars: h/l wrap the close by ±2 points."""
+    return [{"t": f"09:{15 + i:02d}", "h": c + 2, "l": c - 2, "c": c, "v": base_vol}
+            for i, c in enumerate(closes)]
+
+
+def test_indicators():
+    from app.scalp import ema, opening_range, rsi, vwap
+
+    closes = [100 + i for i in range(30)]
+    bars = _bars(closes)
+    assert ema(closes, 9) is not None and ema(closes, 9) > ema(closes, 20)
+    assert rsi(closes) == 100.0  # monotonic up
+    assert vwap(bars) is not None
+    orh, orl = opening_range(bars)
+    assert orh == closes[14] + 2 and orl == closes[0] - 2
+    assert ema([1, 2], 9) is None and rsi([1, 2]) is None  # insufficient data
+
+
+def test_orb_and_vwap_rules():
+    from app.scalp import evaluate_rules
+
+    # rising trend with pullbacks (RSI < 75) → ORB CE breakout
+    up, px = [], 24000.0
+    for i in range(36):
+        px += -3 if i % 3 == 2 else 4  # +4, +4, −3 …
+        up.append(px)
+    hits = evaluate_rules(_bars(up))
+    assert any(h["rule"] == "ORB" and h["direction"] == "CE" for h in hits)
+    # falling trend with bounces (RSI > 25) → ORB PE
+    dn, px = [], 24000.0
+    for i in range(36):
+        px += 3 if i % 3 == 2 else -4
+        dn.append(px)
+    hits = evaluate_rules(_bars(dn))
+    assert any(h["rule"] == "ORB" and h["direction"] == "PE" for h in hits)
+    # flat chop inside range → nothing
+    flat = [24000 + (1 if i % 2 else -1) for i in range(35)]
+    assert evaluate_rules(_bars(flat)) == []
+    # too little data → nothing
+    assert evaluate_rules(_bars([24000] * 10)) == []
+
+
+def test_wall_reject_rule():
+    from app.scalp import evaluate_rules
+
+    # rallies into the 24100 CE wall then REJECTS hard (momentum lost at the end)
+    closes = [24000] * 20 + [24030, 24060, 24080, 24096, 24098, 24060, 24030, 24010]
+    hits = evaluate_rules(_bars(closes), {"resistance": 24100.0, "support": 23800.0})
+    assert any(h["rule"] == "WALL_REJECT" and h["direction"] == "PE" for h in hits)
+
+
+def test_bias_filter_and_theta_cutoff():
+    from app.scalp import bias_allows, theta_cutoff_passed
+
+    assert bias_allows("CE", "Overweight") and not bias_allows("PE", "Overweight")
+    assert bias_allows("PE", "Sell") and not bias_allows("CE", "Buy") is False
+    assert bias_allows("CE", "Hold") and bias_allows("PE", None)
+    assert theta_cutoff_passed(datetime(2026, 9, 7, 14, 30, tzinfo=IST))
+    assert not theta_cutoff_passed(datetime(2026, 9, 7, 11, 0, tzinfo=IST))
+
+
+def test_pick_strike_and_build_signal():
+    from app.scalp import build_scalp_signal, pick_scalp_strike
+
+    ladder = [
+        {"strike": 23900, "ce_ltp": 120.0, "pe_ltp": 40.0, "ce_delta": 0.62, "pe_delta": -0.38,
+         "ce_theta": -8.0, "pe_theta": -7.0},
+        {"strike": 23950, "ce_ltp": 90.0, "pe_ltp": 55.0, "ce_delta": 0.52, "pe_delta": -0.48,
+         "ce_theta": -9.0, "pe_theta": -8.5},
+        {"strike": 24000, "ce_ltp": 66.0, "pe_ltp": 75.0, "ce_delta": 0.41, "pe_delta": -0.59,
+         "ce_theta": -9.5, "pe_theta": -9.0},
+    ]
+    # CE pick: 23950 (delta .52 closest to .50 inside band; 0.62 is out of band)
+    assert pick_scalp_strike(ladder, "CE")["strike"] == 23950
+    assert pick_scalp_strike(ladder, "PE")["strike"] == 23950
+    snap = {"spot": 23940.0, "atm_ladder": ladder}
+    sig = build_scalp_signal("NIFTY", {"rule": "ORB", "direction": "CE", "why": "test"},
+                             snap, {"trading_capital": 500_000, "risk_per_trade_pct": 1.0})
+    assert sig["instrument"] == "NIFTY 23950 CE"
+    assert sig["ep"] == 90.0 and sig["sl"] == 73.8  # −18%
+    assert sig["tp"] == round(90.0 + 16.2 * 1.5, 2)  # 1:1.5
+    # scalp risk defaults to half the swing risk → budget 2500; risk/lot 16.2*65=1053 → 2 lots
+    assert sig["sizing"]["lots"] == 2 and sig["sizing"]["profit_tp"] == round(24.3 * 65 * 2, 2)
+    # empty ladder → no signal
+    assert build_scalp_signal("NIFTY", {"rule": "ORB", "direction": "CE", "why": ""},
+                              {"spot": 1, "atm_ladder": []}, {}) is None
+
+
+def test_scalp_api_and_dedupe(client, auth):
+    from app.db import SessionLocal
+    from app.models import User
+    from app.scalp import emit_signal
+
+    with SessionLocal() as db:
+        uid = db.query(User).filter(User.email == "tester@agentalgo.dev").first().id
+    sig = {"symbol": "NIFTY", "rule": "ORB", "direction": "CE", "instrument": "NIFTY 23950 CE",
+           "ep": 90.0, "sl": 73.8, "tp": 114.3, "rr": 1.5, "why": "t", "sizing": {"lots": 2}}
+    assert emit_signal(uid, sig, simulated=True) is not None
+    assert emit_signal(uid, sig, simulated=True) is None  # cooldown dedupe
+    r = client.get("/api/scalp/signals", headers=auth)
+    assert r.status_code == 200
+    body = r.json()
+    assert body and body[0]["instrument"] == "NIFTY 23950 CE" and body[0]["simulated"] is True
+    r2 = client.get("/api/scalp/status", headers=auth)
+    assert r2.status_code == 200 and "market_open" in r2.json()
