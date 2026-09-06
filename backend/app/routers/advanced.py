@@ -187,6 +187,20 @@ def scalp_signals(
             for r in rows]
 
 
+@router.delete("/scalp/signals/simulated", status_code=204)
+def clear_simulated_signals(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Wipe test rows so the table starts clean — real signals are never touched."""
+    from ..models import ScalpSignal
+
+    db.query(ScalpSignal).filter(
+        ScalpSignal.user_id == user.id, ScalpSignal.simulated.is_(True)
+    ).delete()
+    db.commit()
+
+
 @router.get("/scalp/status")
 async def scalp_status(
     user: Annotated[User, Depends(get_current_user)],

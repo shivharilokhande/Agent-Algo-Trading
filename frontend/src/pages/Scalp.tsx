@@ -55,6 +55,14 @@ export default function Scalp() {
     } catch (ex: any) { setErr(ex.message); } finally { setBusy(false); }
   }
 
+  async function clearSimulated() {
+    setBusy(true); setErr("");
+    try {
+      await api.del("/api/scalp/signals/simulated");
+      await load();
+    } catch (ex: any) { setErr(ex.message); } finally { setBusy(false); }
+  }
+
   const symbols: string[] = cfg.scalp_symbols || ["NIFTY"];
 
   return (
@@ -94,7 +102,12 @@ export default function Scalp() {
               placeholder="½ of swing"
               onBlur={(e) => e.target.value && saveCfg({ scalp_risk_pct: Number(e.target.value) })} />
           </label>
-          <button className="small" disabled={busy} onClick={simulate}>Test signal (simulated)</button>
+          {!status?.market_open && (
+            <button className="small" disabled={busy} onClick={simulate}>Test signal (simulated)</button>
+          )}
+          {signals.some((s) => s.simulated) && (
+            <button className="small" disabled={busy} onClick={clearSimulated}>Clear simulated</button>
+          )}
         </div>
         {status && (
           <p className="muted" style={{ marginBottom: 0 }}>
