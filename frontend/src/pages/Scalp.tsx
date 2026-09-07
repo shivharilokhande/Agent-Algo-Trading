@@ -144,7 +144,8 @@ export default function Scalp() {
           <tbody>
             {signals.map((s) => (
               <tr key={s.id} style={s.simulated ? { opacity: 0.75 } : undefined}>
-                <td className="mono">{new Date(s.created_at).toLocaleTimeString("en-IN", { hour12: false })}
+                <td className="mono">{new Date(s.created_at.endsWith("Z") || s.created_at.includes("+") ? s.created_at : s.created_at + "Z")
+                  .toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })}
                   {s.simulated && <div><span className="pill failed" style={{ fontSize: 10 }}>SIMULATED</span></div>}
                 </td>
                 <td><b>{s.rule}</b></td>
