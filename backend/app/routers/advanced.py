@@ -288,7 +288,7 @@ async def scalp_backtest(
     symbol = symbol.upper()
     if symbol not in ("NIFTY", "BANKNIFTY", "FINNIFTY"):
         raise HTTPException(status_code=422, detail="symbol must be NIFTY/BANKNIFTY/FINNIFTY")
-    days = max(1, min(days, 7))
+    days = max(1, min(days, 60))  # >7 needs a live Kite session (historical add-on)
     capital = max(10_000.0, min(capital, 100_000_000.0))
     risk_pct = max(0.1, min(risk_pct, 10.0))
     try:

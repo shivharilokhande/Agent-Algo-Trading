@@ -78,6 +78,7 @@ export default function Scalp() {
   const [bt, setBt] = useState<any>(null);
   const [btBusy, setBtBusy] = useState(false);
   const [btSym, setBtSym] = useState("NIFTY");
+  const [btDays, setBtDays] = useState(7);
   const [btCapital, setBtCapital] = useState(100000);
   const [btRisk, setBtRisk] = useState(1.0);
 
@@ -88,7 +89,7 @@ export default function Scalp() {
     setBtBusy(true); setErr(""); setBt(null);
     try {
       setBt(await api.post(
-        `/api/scalp/backtest?symbol=${btSym}&days=7&capital=${btCapital}&risk_pct=${btRisk}`));
+        `/api/scalp/backtest?symbol=${btSym}&days=${btDays}&capital=${btCapital}&risk_pct=${btRisk}`));
     } catch (ex: any) { setErr(ex.message); } finally { setBtBusy(false); }
   }
 
@@ -206,6 +207,10 @@ export default function Scalp() {
           <select value={btSym} onChange={(e) => setBtSym(e.target.value)}>
             {ALL_SYMBOLS.map((s) => <option key={s}>{s}</option>)}
           </select>
+          <label>Days <select value={btDays} onChange={(e) => setBtDays(Number(e.target.value))}>
+            <option value={7}>7</option><option value={15}>15 (Kite)</option>
+            <option value={30}>30 (Kite)</option><option value={60}>60 (Kite)</option>
+          </select></label>
           <label>Capital ₹ <input type="number" step="10000" min="10000" style={{ width: 110 }}
             value={btCapital} onChange={(e) => setBtCapital(Number(e.target.value))} /></label>
           <label>Risk %/trade <input type="number" step="0.1" min="0.1" max="10" style={{ width: 60 }}

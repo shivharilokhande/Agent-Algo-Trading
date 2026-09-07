@@ -88,7 +88,19 @@ def assumed_expiry(symbol: str, day_iso: str) -> str:
 
 
 def fetch_history_sessions(symbol: str, days: int = 7) -> dict[str, list[dict]]:
-    """1m bars for the last `days` trading sessions, keyed by ISO date."""
+    """1m bars for the last `days` trading sessions, keyed by ISO date.
+
+    Kite historical first when a broker session is live (up to ~60 days of
+    exchange-grade candles); yfinance fallback caps at ~7 days.
+    """
+    try:
+        from .kite_data import kite_history_sessions
+
+        kite_sessions = kite_history_sessions(symbol, days)
+        if kite_sessions:
+            return kite_sessions
+    except Exception:  # noqa: BLE001
+        pass
     import yfinance as yf
 
     df = yf.Ticker(_YF.get(symbol, symbol)).history(period="8d", interval="1m",
@@ -316,6 +328,7 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
                      "backtest (bias runs didn't exist historically)."),
         },
         "trades": trades,
+        "by_rule": by_rule,
         "summary": {
             "n": len(trades), "n_taken": len(taken),
             "tp": len(wins), "sl": len(losses),

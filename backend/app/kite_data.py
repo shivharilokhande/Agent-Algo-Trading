@@ -223,6 +223,45 @@ def kite_option_quote(symbol: str, expiry_str: str, strike: int, direction: str,
     return None
 
 
+_INDEX_TOKEN = {"NIFTY": 256265, "BANKNIFTY": 260105, "FINNIFTY": 257801}
+
+
+def kite_history_sessions(symbol: str, days: int) -> dict[str, list[dict]] | None:
+    """1m session bars for the last `days` trading days from Kite historical
+    (subscription add-on). Chunked ≤30 days per request (API limit is 60 for
+    minute candles). None when unavailable → caller falls back to yfinance."""
+    from datetime import timedelta
+
+    token = _INDEX_TOKEN.get(symbol)
+    uid = _any_connected_user()
+    if token is None or uid is None:
+        return None
+    kite = _client(uid)
+    if kite is None:
+        return None
+    sessions: dict[str, list[dict]] = {}
+    try:
+        end = datetime.now(IST)
+        start = end - timedelta(days=int(days * 1.6) + 5)  # weekends/holidays margin
+        cur = start
+        while cur < end:
+            chunk_end = min(cur + timedelta(days=30), end)
+            for c in kite.historical_data(token, cur, chunk_end, "minute"):
+                t = c["date"]  # tz-aware IST
+                if (t.hour, t.minute) < (9, 15) or (t.hour, t.minute) > (15, 30):
+                    continue
+                sessions.setdefault(t.date().isoformat(), []).append(
+                    {"t": t.isoformat(), "hm": (t.hour, t.minute),
+                     "h": float(c["high"]), "l": float(c["low"]),
+                     "c": float(c["close"]), "v": float(c.get("volume") or 0)})
+            cur = chunk_end
+    except Exception as exc:  # noqa: BLE001 — no add-on / expired session
+        log.info("Kite historical unavailable for %s: %s", symbol, exc)
+        return None
+    out = dict(sorted(sessions.items())[-days:])
+    return out or None
+
+
 def refine_signal_with_kite(sig: dict, expiry_str: str) -> dict:
     """Upgrade a scalp signal's premium to the broker's live quote (if connected).
 
