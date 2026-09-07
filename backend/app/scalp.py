@@ -35,6 +35,10 @@ OPENING_RANGE_MIN = 15       # ORB window: 09:15–09:30
 COOLDOWN_MIN = 30            # min gap between signals per (symbol, rule)
 DELTA_LO, DELTA_HI = 0.40, 0.60  # scalp strike: fast-moving near-ATM delta
 RSI_LEN = 14
+# Quality filters (60d fit/validation tested — improved BOTH halves; apply only
+# to ORB/VWAP_RECLAIM, the rules they were validated on):
+MAX_OR_WIDTH_BP = 55   # skip hyper-volatile opens: breakouts whipsaw (37% win, −0.10R avg)
+MAX_EMA_GAP_BP = 4     # don't chase extended moves (EMA9−EMA20 gap > 4bp of spot)
 DEFAULT_SCALP_RISK_FRACTION = 0.5  # scalp risk = half the swing risk % by default
 
 
@@ -116,16 +120,21 @@ def evaluate_rules(bars: list[dict], oi_walls: dict | None = None) -> list[dict]
     trend_up = e9 > e20 and spot > vw
     trend_dn = e9 < e20 and spot < vw
 
+    # Quality gate for the trend rules (validated on 60d in/out-of-sample):
+    # wide opening range = chop day, big EMA gap = late entry into a spent move.
+    quality_ok = ((or_high - or_low) / spot * 1e4 <= MAX_OR_WIDTH_BP
+                  and abs(e9 - e20) / spot * 1e4 <= MAX_EMA_GAP_BP)
+
     # ORB — FRESH breakout of the opening range with alignment. "Fresh" = one of
     # the last 3 closes was still inside the range; without this the condition
     # stays true all day in a trend and re-fires stale mid-trend entries every
     # cooldown (backtest: dominant loss source).
     prev3_orb = closes[-4:-1]
-    if (spot > or_high and any(c <= or_high for c in prev3_orb)
+    if (quality_ok and spot > or_high and any(c <= or_high for c in prev3_orb)
             and trend_up and r < 75):
         out.append({"rule": "ORB", "direction": "CE",
                     "why": f"spot {spot:.1f} broke OR high {or_high:.1f}; EMA9>EMA20, above VWAP {vw:.1f}, RSI {r}"})
-    elif (spot < or_low and any(c >= or_low for c in prev3_orb)
+    elif (quality_ok and spot < or_low and any(c >= or_low for c in prev3_orb)
             and trend_dn and r > 25):
         out.append({"rule": "ORB", "direction": "PE",
                     "why": f"spot {spot:.1f} broke OR low {or_low:.1f}; EMA9<EMA20, below VWAP {vw:.1f}, RSI {r}"})
@@ -134,6 +143,8 @@ def evaluate_rules(bars: list[dict], oi_walls: dict | None = None) -> list[dict]
     # (≥0.05% beyond it, so 1–2 point chop around VWAP can never signal)
     clearance = vw * 0.0005
     prev3 = closes[-4:-1]
+    if not quality_ok:
+        prev3 = []  # quality gate also covers VWAP_RECLAIM (validated together)
     if any(c < vw for c in prev3) and spot > vw + clearance and e9 > e20 and 45 < r < 70:
         out.append({"rule": "VWAP_RECLAIM", "direction": "CE",
                     "why": f"reclaimed VWAP {vw:.1f} (spot {spot:.1f}) with EMA9>EMA20, RSI {r}"})

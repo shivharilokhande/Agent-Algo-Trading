@@ -60,6 +60,35 @@ def test_orb_and_vwap_rules():
     assert evaluate_rules(_bars([24000] * 10)) == []
 
 
+def test_quality_filters_gate_trend_rules():
+    """R6: wide opening range / extended EMA gap suppress ORB & VWAP_RECLAIM
+    (60d-validated filters) — WALL_REJECT is not gated (no backtest data)."""
+    from app.scalp import evaluate_rules
+
+    def trend(start, step_main, step_pull, n):
+        out, px = [], start
+        for i in range(n):
+            px += step_pull if i % 3 == 2 else step_main
+            out.append(px)
+        return out
+
+    # same fresh ORB CE shape as the passing test, but a HUGE opening range
+    up = [24000.0 + (200 if i % 2 else -200) for i in range(15)]  # OR ≈ 400+ pts wide
+    up += trend(24000, 2, -1, 15)[:12]
+    up += [24201, 24202, 24404.5, 24408, 24412]
+    bars = _bars(up)
+    assert not any(h["rule"] in ("ORB", "VWAP_RECLAIM") for h in evaluate_rules(bars))
+    # WALL_REJECT can still fire on a wide-OR day (ungated): take the passing
+    # wall-reject shape and widen the opening range via early highs/lows only
+    closes = [24000.0] * 20 + [24030, 24060, 24080, 24096, 24098, 24060, 24030, 24010]
+    bars2 = _bars(closes)
+    bars2[1]["h"] = 24250.0   # OR width ≈ 500 pts — way past the 55bp gate
+    bars2[2]["l"] = 23750.0
+    hits = evaluate_rules(bars2, {"resistance": 24100.0, "support": 23000.0})
+    assert any(h["rule"] == "WALL_REJECT" for h in hits)
+    assert not any(h["rule"] == "ORB" for h in hits)  # trend rules stay gated
+
+
 def test_wall_reject_rule():
     from app.scalp import evaluate_rules
 
