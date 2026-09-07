@@ -80,7 +80,7 @@ export default function Scalp() {
   }
 
   return (
-    <div>
+    <div className="scalp-page">
       <h1>Scalp Mode</h1>
       <p className="muted">
         Fast lane: rule-based signals (ORB, VWAP reclaim, OI-wall reject) computed every{" "}
@@ -218,7 +218,8 @@ export default function Scalp() {
                     <td className="mono">{t.day}</td><td className="mono">{t.time}</td>
                     <td className="mono">{t.exit_t ? t.exit_t.slice(11, 16) : "—"}</td>
                     <td><b>{t.rule}</b></td>
-                    <td><b>{t.instrument || t.direction}</b><div className="muted" style={{ fontSize: 11 }}>spot {t.spot}</div></td>
+                    <td style={{ whiteSpace: "nowrap" }}><b>{t.instrument || t.direction}</b>
+                      <div className="muted" style={{ fontSize: 11 }}>exp {t.expiry} · spot {t.spot}</div></td>
                     <td className="mono">₹{t.entry}</td>
                     <td className="mono" style={{ color: t.exit >= t.entry ? "var(--green)" : "var(--red)" }}>₹{t.exit}</td>
                     <td>{t.lots === 0 ? <span className="pill failed" style={{ fontSize: 10 }}>skip</span> : t.lots}</td>

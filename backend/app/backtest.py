@@ -39,6 +39,27 @@ def atm_instrument(symbol: str, spot: float, direction: str) -> str:
     return f"{symbol} {round(spot / step) * step} {direction}"
 
 
+def assumed_expiry(symbol: str, day_iso: str) -> str:
+    """Nearest expiry the model assumes: NIFTY = next weekly (Tuesday);
+    BANKNIFTY/FINNIFTY = monthly (last Tuesday of the month)."""
+    from datetime import date, timedelta
+
+    d = date.fromisoformat(day_iso)
+    if symbol == "NIFTY":
+        exp = d + timedelta(days=(1 - d.weekday()) % 7)  # next Tuesday (incl. today)
+    else:
+        def last_tuesday(y: int, m: int) -> date:
+            nxt = date(y + (m == 12), m % 12 + 1, 1)
+            e = nxt - timedelta(days=1)
+            return e - timedelta(days=(e.weekday() - 1) % 7)
+
+        exp = last_tuesday(d.year, d.month)
+        if exp < d:
+            y, m = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
+            exp = last_tuesday(y, m)
+    return exp.strftime("%d-%b-%Y")
+
+
 def fetch_history_sessions(symbol: str, days: int = 7) -> dict[str, list[dict]]:
     """1m bars for the last `days` trading sessions, keyed by ISO date."""
     import yfinance as yf
@@ -204,6 +225,7 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
                     "day": day, "time": bars[i]["t"][11:16], "rule": hit["rule"],
                     "direction": hit["direction"], "spot": round(spot0, 1),
                     "instrument": atm_instrument(symbol, spot0, hit["direction"]),
+                    "expiry": assumed_expiry(symbol, day),
                     "entry": ep, "exit": exit_p, "lots": lots,
                     "outlay": round(ep * lot * lots, 2) if lots else 0.0,
                     "pnl": pnl, "equity": equity,
