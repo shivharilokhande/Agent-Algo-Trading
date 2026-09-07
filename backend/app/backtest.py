@@ -151,6 +151,9 @@ def _simulate_policy(bars: list[dict], i: int, direction: str, policy: str,
     B trail  : SL −1R; at +0.5R move stop to breakeven, then trail 0.5R off the
                peak; no target cap; hard cap 45 min
     C hybrid : B, plus 'loser time-out' — if +0.5R never reached by 20 min, exit
+    E extend : A for 20 min; at the bell, a trade holding ≥ +0.5R earns 10 more
+               minutes chasing the full TP with a +0.5R profit floor (exit the
+               moment it slips below); everything else exits like A (user idea)
     """
     spot0 = bars[i]["c"]
     if p0 is None:
@@ -158,18 +161,34 @@ def _simulate_policy(bars: list[dict], i: int, direction: str, policy: str,
     risk = p0 * SCALP_SL_PCT / 100
     sign = 1.0 if direction == "CE" else -1.0
     to_r = lambda px: sign * (px - spot0) * ASSUMED_DELTA / risk  # noqa: E731
-    end = min(i + (SCALP_TIME_STOP_MIN if policy == "A" else HARD_CAP_MIN), len(bars) - 1)
+    end = min(i + (SCALP_TIME_STOP_MIN if policy == "A" else
+                   SCALP_TIME_STOP_MIN + 10 if policy in ("E", "F") else HARD_CAP_MIN),
+              len(bars) - 1)
     peak, be_armed = 0.0, False
+    extended = False
     for j in range(i + 1, end + 1):
         hi, lo = bars[j]["h"], bars[j]["l"]
         fav = to_r(hi if direction == "CE" else lo)
         adv = to_r(lo if direction == "CE" else hi)  # most adverse close-equivalent
         close_r = to_r(bars[j]["c"])
-        if policy == "A":
+        if policy in ("A", "E", "F"):
             if adv <= -1.0:
                 return {"outcome": "SL", "r": -1.0, "bars_held": j - i}
             if fav >= SCALP_RR:
                 return {"outcome": "TP", "r": SCALP_RR, "bars_held": j - i}
+            if policy in ("E", "F"):
+                if j - i == SCALP_TIME_STOP_MIN:
+                    if close_r >= 0.5:
+                        extended = True  # earned 10 extra minutes chasing TP
+                        peak = max(peak, close_r)
+                    else:
+                        return {"outcome": "TIME", "r": round(close_r, 2), "bars_held": j - i}
+                elif extended:
+                    peak = max(peak, close_r)
+                    # E: static +0.5R floor; F: floor ratchets up with the peak
+                    floor = 0.5 if policy == "E" else max(0.5, peak - 0.25)
+                    if close_r < floor:
+                        return {"outcome": "FLOOR", "r": round(close_r, 2), "bars_held": j - i}
             continue
         # B / C — stops first (conservative), using state from BEFORE this bar
         if not be_armed and adv <= -1.0:
@@ -201,7 +220,8 @@ def compare_exit_policies(symbol: str, days: int = 7) -> dict:
                     continue
                 last_fire[hit["rule"]] = i
                 signals.append((bars, i, hit["direction"], hit["rule"], day))
-    policies = {"A_fixed_20m": "A", "B_trail": "B", "C_hybrid": "C"}
+    policies = {"A_fixed_20m": "A", "B_trail": "B", "C_hybrid": "C",
+                "E_extend_floor": "E", "F_extend_ratchet": "F"}
     out: dict = {"symbol": symbol, "sessions": list(sessions.keys()),
                  "n_signals": len(signals), "policies": {}}
     for name, p in policies.items():
