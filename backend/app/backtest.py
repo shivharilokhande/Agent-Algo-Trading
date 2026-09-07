@@ -187,6 +187,9 @@ def _simulate_policy(bars: list[dict], i: int, direction: str, policy: str,
     E extend : A for 20 min; at the bell, a trade holding ≥ +0.5R earns 10 more
                minutes chasing the full TP with a +0.5R profit floor (exit the
                moment it slips below); everything else exits like A (user idea)
+    G run-TP : A until the +1.5R target is TOUCHED — then instead of banking,
+               ride with a ratcheting trail (floor starts +1.2R, tracks
+               peak−0.3R) chasing 2R/3R; hard cap 45 min (user idea #2)
     """
     spot0 = bars[i]["c"]
     if p0 is None:
@@ -199,11 +202,28 @@ def _simulate_policy(bars: list[dict], i: int, direction: str, policy: str,
               len(bars) - 1)
     peak, be_armed = 0.0, False
     extended = False
+    tp_riding = False  # policy G: TP touched, now trailing for more
     for j in range(i + 1, end + 1):
         hi, lo = bars[j]["h"], bars[j]["l"]
         fav = to_r(hi if direction == "CE" else lo)
         adv = to_r(lo if direction == "CE" else hi)  # most adverse close-equivalent
         close_r = to_r(bars[j]["c"])
+        if policy == "G":
+            if tp_riding:
+                peak = max(peak, fav)
+                floor = max(1.2, peak - 0.3)
+                if close_r <= floor:
+                    return {"outcome": "RUN", "r": round(max(close_r, 1.2), 2),
+                            "bars_held": j - i}
+                continue
+            if adv <= -1.0:
+                return {"outcome": "SL", "r": -1.0, "bars_held": j - i}
+            if fav >= SCALP_RR:
+                tp_riding, peak = True, fav  # don't bank — ride the winner
+                continue
+            if j - i >= SCALP_TIME_STOP_MIN:
+                return {"outcome": "TIME", "r": round(close_r, 2), "bars_held": j - i}
+            continue
         if policy in ("A", "E", "F"):
             if adv <= -1.0:
                 return {"outcome": "SL", "r": -1.0, "bars_held": j - i}
@@ -383,7 +403,8 @@ def compare_exit_policies(symbol: str, days: int = 7) -> dict:
                 last_fire[hit["rule"]] = i
                 signals.append((bars, i, hit["direction"], hit["rule"], day))
     policies = {"A_fixed_20m": "A", "B_trail": "B", "C_hybrid": "C",
-                "E_extend_floor": "E", "F_extend_ratchet": "F"}
+                "E_extend_floor": "E", "F_extend_ratchet": "F",
+                "G_run_after_tp": "G"}
     out: dict = {"symbol": symbol, "sessions": list(sessions.keys()),
                  "n_signals": len(signals), "policies": {}}
     for name, p in policies.items():
