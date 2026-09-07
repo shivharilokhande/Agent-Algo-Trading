@@ -36,3 +36,24 @@ def test_kite_degrades_without_credentials(client, auth):
     # session exchange without creds → 400, not a crash
     r = client.post("/api/kite/session", headers=auth, json={"request_token": "abcdefgh"})
     assert r.status_code == 400
+
+
+def test_kite_callback_state_and_redirects(client):
+    from app.kite_data import make_state, verify_state
+
+    # signed state round-trips; garbage doesn't
+    assert verify_state(make_state("user123")) == "user123"
+    assert verify_state("garbage") is None
+    # access tokens are NOT valid as callback state (scope check)
+    from app.security import create_access_token
+
+    assert verify_state(create_access_token("user123")) is None
+    # callback is unauthenticated but redirects safely on bad/expired state
+    r = client.get("/api/kite/callback?request_token=abc&state=garbage",
+                   follow_redirects=False)
+    assert r.status_code == 303 and "/settings?kite=error" in r.headers["location"]
+    # failed Zerodha login → error bounce (valid state, status!=success)
+    st = make_state("user123")
+    r = client.get(f"/api/kite/callback?state={st}&status=cancelled",
+                   follow_redirects=False)
+    assert r.status_code == 303 and "kite=error" in r.headers["location"]

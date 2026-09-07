@@ -215,6 +215,37 @@ async def kite_session(
         raise HTTPException(status_code=502, detail=f"Kite session exchange failed: {exc}") from exc
 
 
+@router.get("/kite/callback")
+async def kite_callback(request_token: str = "", state: str = "", status: str = ""):
+    """Zerodha redirect target (set this as the app's Redirect URL):
+    completes the daily session automatically, then bounces to Settings.
+
+    Unauthenticated by necessity (the browser arrives from Zerodha) — the
+    signed short-lived `state` from our own login URL identifies the user.
+    """
+    import asyncio
+    from urllib.parse import quote
+
+    from fastapi.responses import RedirectResponse
+
+    from .. import kite_data
+
+    def bounce(result: str, detail: str = "") -> RedirectResponse:
+        q = f"?kite={result}" + (f"&detail={quote(detail[:200])}" if detail else "")
+        return RedirectResponse(url=f"/settings{q}", status_code=303)
+
+    uid = kite_data.verify_state(state)
+    if uid is None:
+        return bounce("error", "Login link expired — click Kite login again")
+    if status and status != "success" or not request_token:
+        return bounce("error", "Zerodha reported a failed login")
+    try:
+        out = await asyncio.to_thread(kite_data.exchange_session, uid, request_token)
+        return bounce("connected", out.get("kite_user", ""))
+    except Exception as exc:  # noqa: BLE001
+        return bounce("error", str(exc))
+
+
 @router.get("/kite/status")
 async def kite_status(user: Annotated[User, Depends(get_current_user)]):
     import asyncio

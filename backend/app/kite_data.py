@@ -51,11 +51,41 @@ def _creds(user_id: str) -> dict | None:
         return out
 
 
+def make_state(user_id: str) -> str:
+    """Short-lived signed state so the unauthenticated browser callback can be
+    mapped to the right user (10-min expiry, kite-callback scope only)."""
+    import time as _time
+
+    import jwt
+
+    from .config import SECRET_KEY
+
+    return jwt.encode({"sub": user_id, "scope": "kite_cb",
+                       "exp": int(_time.time()) + 600}, SECRET_KEY, algorithm="HS256")
+
+
+def verify_state(state: str) -> str | None:
+    import jwt
+
+    from .config import SECRET_KEY
+
+    try:
+        payload = jwt.decode(state, SECRET_KEY, algorithms=["HS256"])
+        return payload["sub"] if payload.get("scope") == "kite_cb" else None
+    except jwt.PyJWTError:
+        return None
+
+
 def login_url(user_id: str) -> str | None:
+    from urllib.parse import quote
+
     c = _creds(user_id)
     if not c:
         return None
-    return f"https://kite.zerodha.com/connect/login?v=3&api_key={c['api_key']}"
+    # redirect_params ride through Zerodha to our callback → auto-connect
+    params = quote(f"state={make_state(user_id)}")
+    return (f"https://kite.zerodha.com/connect/login?v=3&api_key={c['api_key']}"
+            f"&redirect_params={params}")
 
 
 def exchange_session(user_id: str, request_token: str) -> dict:

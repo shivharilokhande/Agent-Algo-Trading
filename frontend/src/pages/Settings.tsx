@@ -12,10 +12,25 @@ function KiteConnectCard({ hasKey, onMsg }: { hasKey: boolean; onMsg: (m: any) =
   }
   useEffect(() => { refresh(); }, [hasKey]);
 
+  // auto-connect flow lands back here as /settings?kite=connected|error
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const res = q.get("kite");
+    if (!res) return;
+    if (res === "connected") {
+      onMsg({ kind: "ok", text: `Kite connected (${q.get("detail") || "ok"}) — live broker data active for today.` });
+    } else {
+      onMsg({ kind: "error", text: `Kite connect failed: ${q.get("detail") || "unknown error"}` });
+    }
+    window.history.replaceState({}, "", "/settings");  // clean the URL
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function openLogin() {
     try {
       const r = await api.get<any>("/api/kite/login-url");
-      window.open(r.login_url, "_blank");
+      window.location.assign(r.login_url);  // same tab → callback lands back on /settings
     } catch (ex: any) { onMsg({ kind: "error", text: ex.message }); }
   }
   async function connect() {
@@ -40,16 +55,22 @@ function KiteConnectCard({ hasKey, onMsg }: { hasKey: boolean; onMsg: (m: any) =
             Status: {st?.connected
               ? <b style={{ color: "var(--green)" }}>CONNECTED — NIFTY LTP {st.nifty_ltp ?? "…"}</b>
               : <b style={{ color: "var(--red)" }}>not connected today</b>}
-            {" "}· Zerodha requires a fresh login every morning: click Login, finish the Kite login,
-            then copy the <code>request_token</code> from the redirect URL and paste it here.
+            {" "}· Zerodha requires a fresh login every morning. With your Kite app's Redirect URL
+            set to <code>http://localhost:5180/api/kite/callback</code>, one click below finishes
+            everything — login, token exchange, and back to this page.
           </p>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button className="small" onClick={openLogin}>1. Kite login ↗</button>
-            <input style={{ width: 320 }} placeholder="2. paste request_token"
-              value={reqToken} onChange={(e) => setReqToken(e.target.value)} />
-            <button className="small" disabled={busy || reqToken.trim().length < 8} onClick={connect}>
-              {busy ? "Connecting…" : "3. Connect"}
-            </button>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <button onClick={openLogin}>Connect Kite for today ↗</button>
+            <details>
+              <summary className="muted" style={{ cursor: "pointer" }}>manual fallback (paste request_token)</summary>
+              <span style={{ display: "inline-flex", gap: 8, marginTop: 6 }}>
+                <input style={{ width: 300 }} placeholder="request_token"
+                  value={reqToken} onChange={(e) => setReqToken(e.target.value)} />
+                <button className="small" disabled={busy || reqToken.trim().length < 8} onClick={connect}>
+                  {busy ? "Connecting…" : "Connect"}
+                </button>
+              </span>
+            </details>
           </div>
           <p className="muted" style={{ marginBottom: 0 }}>
             When connected: Level Watch uses real-time spot, and scalp signals price from the
