@@ -16,8 +16,6 @@ from ..tickers import normalize_ticker
 
 router = APIRouter(prefix="/api", tags=["advanced"])
 
-RATINGS_ORDER = ["Buy", "Overweight", "Hold", "Underweight", "Sell"]
-
 
 # ==================== A3: ensembles ====================
 
@@ -56,6 +54,16 @@ async def create_ensemble(
         try:
             run = await create_run_for_user(db, user.id, cfg)
         except RunValidationError as exc:
+            # R5-12: don't leave earlier stacks' runs orphaned on partial failure
+            if run_ids:
+                from ..services import detach_run_references
+
+                for rid in run_ids:
+                    orphan = db.get(Run, rid)
+                    if orphan is not None and orphan.status == "queued":
+                        detach_run_references(db, rid)
+                        db.delete(orphan)
+                db.commit()
             raise HTTPException(status_code=422, detail=f"Stack '{stack.label}': {exc}") from exc
         run_ids.append(run.id)
     ens = Ensemble(
@@ -240,9 +248,16 @@ def clear_simulated_signals(
     """Wipe test rows so the table starts clean — real signals are never touched."""
     from ..models import ScalpSignal
 
+    from ..models import Alert
+
     db.query(ScalpSignal).filter(
         ScalpSignal.user_id == user.id, ScalpSignal.simulated.is_(True)
     ).delete()
+    # R5: also clear the matching [SIM] rows from the alert bell
+    db.query(Alert).filter(
+        Alert.user_id == user.id, Alert.type == "scalp",
+        Alert.message.like("[SIM]%"),
+    ).delete(synchronize_session=False)
     db.commit()
 
 
@@ -258,17 +273,22 @@ async def scalp_status(
     from ..models import Setting
     from ..scalp import SCALP_POLL_SECONDS, day_bias, theta_cutoff_passed
 
+    import asyncio
+
     srow = db.get(Setting, user.id)
     cfg = json.loads(srow.config_json) if srow else {}
     symbols = cfg.get("scalp_symbols") or ["NIFTY"]
     now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    bias = {s: await asyncio.to_thread(day_bias, user.id, s, True) for s in symbols}
     return {
         "enabled": bool(cfg.get("scalp_enabled")),
         "symbols": symbols,
         "market_open": is_market_hours_ist(),
         "theta_cutoff": theta_cutoff_passed(now_ist),
         "poll_seconds": SCALP_POLL_SECONDS,
-        "bias": {s: day_bias(user.id, s) for s in symbols},
+        # {sym: {rating, as_of, today}} — stale ratings shown with their date,
+        # and the engine itself filters on TODAY's rating only (R5-7)
+        "bias": bias,
     }
 
 

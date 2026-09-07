@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { api } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { api, fmtIst } from "../api";
 
 type Signal = {
   id: string; symbol: string; rule: string; direction: string; instrument: string;
@@ -8,19 +8,22 @@ type Signal = {
   sizing?: any;
 };
 
+type Bias = { rating: string | null; as_of: string | null; today: boolean };
 type Status = {
-  enabled: boolean; symbols: string[]; market_open: boolean;
-  theta_cutoff: boolean; poll_seconds: number; bias: Record<string, string | null>;
+  market_open: boolean; theta_cutoff: boolean; poll_seconds: number;
+  bias: Record<string, Bias | null>;
 };
 
 const ALL_SYMBOLS = ["NIFTY", "BANKNIFTY", "FINNIFTY"];
-const inr = (v: number) => "₹" + Number(v).toLocaleString("en-IN");
+const inr = (v: number | null | undefined) =>
+  v === null || v === undefined ? "—" : "₹" + Number(v).toLocaleString("en-IN");
 
 export default function Scalp() {
   const [status, setStatus] = useState<Status | null>(null);
   const [signals, setSignals] = useState<Signal[]>([]);
-  const [cfg, setCfg] = useState<any>({});
+  const [cfg, setCfg] = useState<any>(null); // null until first load (R5: gate controls)
   const [busy, setBusy] = useState(false);
+  const savingRef = useRef(false);
   const [err, setErr] = useState("");
 
   async function load() {
@@ -28,23 +31,27 @@ export default function Scalp() {
       setStatus(await api.get<Status>("/api/scalp/status"));
       setSignals(await api.get<Signal[]>("/api/scalp/signals"));
       const s = await api.get<any>("/api/settings");
-      setCfg(s.config || {});
+      // R5: never let the background poll clobber an in-flight save
+      if (!savingRef.current) setCfg(s.config || {});
+      setErr("");  // clear a stale banner once a poll succeeds
     } catch (ex: any) { setErr(ex.message); }
   }
   useEffect(() => {
     load();
     const t = setInterval(load, 15000); // live refresh
     return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function saveCfg(patch: any) {
-    setBusy(true); setErr("");
+    setBusy(true); savingRef.current = true; setErr("");
     try {
-      const next = { ...cfg, ...patch };
-      await api.put("/api/settings", { config: next });
-      setCfg(next);
+      // R5-1: server merges now — send ONLY the patch, never the whole state
+      const res = await api.put<any>("/api/settings", { config: patch });
+      setCfg(res.config || {});
       setStatus(await api.get<Status>("/api/scalp/status"));
-    } catch (ex: any) { setErr(ex.message); } finally { setBusy(false); }
+    } catch (ex: any) { setErr(ex.message); }
+    finally { setBusy(false); savingRef.current = false; }
   }
 
   async function simulate() {
@@ -63,13 +70,19 @@ export default function Scalp() {
     } catch (ex: any) { setErr(ex.message); } finally { setBusy(false); }
   }
 
-  const symbols: string[] = cfg.scalp_symbols || ["NIFTY"];
+  // Backend treats an empty list as ["NIFTY"]; mirror that so UI ≡ engine (R5)
+  const rawSymbols: string[] = cfg?.scalp_symbols || [];
+  const symbols: string[] = rawSymbols.length ? rawSymbols : ["NIFTY"];
+  const ctlDisabled = busy || cfg === null;
 
   const [bt, setBt] = useState<any>(null);
   const [btBusy, setBtBusy] = useState(false);
   const [btSym, setBtSym] = useState("NIFTY");
   const [btCapital, setBtCapital] = useState(100000);
   const [btRisk, setBtRisk] = useState(1.0);
+
+  const btInputsOk = Number.isFinite(btCapital) && btCapital >= 10000
+    && Number.isFinite(btRisk) && btRisk >= 0.1 && btRisk <= 10;
 
   async function runBacktest() {
     setBtBusy(true); setErr(""); setBt(null);
@@ -85,8 +98,8 @@ export default function Scalp() {
       <p className="muted">
         Fast lane: rule-based signals (ORB, VWAP reclaim, OI-wall reject) computed every{" "}
         {status?.poll_seconds ?? 45}s from live 1-minute data — filtered by the day's agent bias,
-        theta-aware (no new signals after 14:30 IST), tight brackets with a {""}
-        20-minute time stop. Research signals only — you place every order yourself.
+        theta-aware (no new signals after 14:30 IST), tight brackets with a 20-minute
+        time stop. Research signals only — you place every order yourself.
       </p>
 
       {err && <div className="error-box">{err}</div>}
@@ -94,14 +107,15 @@ export default function Scalp() {
       <div className="card">
         <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
           <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 600 }}>
-            <input type="checkbox" checked={!!cfg.scalp_enabled} disabled={busy}
+            <input type="checkbox" checked={!!cfg?.scalp_enabled} disabled={ctlDisabled}
               onChange={(e) => saveCfg({ scalp_enabled: e.target.checked })} />
-            Scalp engine {cfg.scalp_enabled ? "ON" : "OFF"}
+            Scalp engine {cfg === null ? "…" : cfg.scalp_enabled ? "ON" : "OFF"}
           </label>
           <span>
             {ALL_SYMBOLS.map((s) => (
               <label key={s} style={{ marginRight: 14 }}>
-                <input type="checkbox" checked={symbols.includes(s)} disabled={busy}
+                <input type="checkbox" checked={symbols.includes(s)}
+                  disabled={ctlDisabled || (symbols.length === 1 && symbols[0] === s)}
                   onChange={(e) => saveCfg({
                     scalp_symbols: e.target.checked
                       ? [...symbols, s] : symbols.filter((x) => x !== s),
@@ -112,12 +126,16 @@ export default function Scalp() {
           <label>
             Scalp risk %/trade{" "}
             <input type="number" step="0.1" min="0.1" max="5" style={{ width: 70 }}
-              defaultValue={cfg.scalp_risk_pct ?? ""}
-              placeholder="½ of swing"
-              onBlur={(e) => e.target.value && saveCfg({ scalp_risk_pct: Number(e.target.value) })} />
+              key={cfg?.scalp_risk_pct ?? "unset"}
+              defaultValue={cfg?.scalp_risk_pct ?? ""}
+              placeholder="½ of swing" disabled={ctlDisabled}
+              onBlur={(e) => {
+                const v = Number(e.target.value);
+                if (e.target.value && Number.isFinite(v) && v > 0) saveCfg({ scalp_risk_pct: v });
+              }} />
           </label>
-          {!status?.market_open && (
-            <button className="small" disabled={busy} onClick={simulate}>Test signal (simulated)</button>
+          {status && !status.market_open && (
+            <button className="small" disabled={ctlDisabled} onClick={simulate}>Test signal (simulated)</button>
           )}
           {signals.some((s) => s.simulated) && (
             <button className="small" disabled={busy} onClick={clearSimulated}>Clear simulated</button>
@@ -128,8 +146,11 @@ export default function Scalp() {
             Market {status.market_open ? "OPEN" : "closed"}
             {status.theta_cutoff && " · past 14:30 theta cutoff — no new signals"}
             {" · bias: "}
-            {Object.entries(status.bias).map(([s, b]) => `${s}=${b ?? "none"}`).join(", ")}
-            {" (from your latest engine run — run the F&O Desk each morning to set it)"}
+            {Object.entries(status.bias).map(([s, b]) =>
+              !b || !b.rating ? `${s}=none`
+                : b.today ? `${s}=${b.rating}`
+                  : `${s}=${b.rating} (STALE ${b.as_of} — ignored)`).join(", ")}
+            {" (bias filters signals only when it comes from a run finished TODAY)"}
           </p>
         )}
       </div>
@@ -144,15 +165,14 @@ export default function Scalp() {
           <tbody>
             {signals.map((s) => (
               <tr key={s.id} style={s.simulated ? { opacity: 0.75 } : undefined}>
-                <td className="mono">{new Date(s.created_at.endsWith("Z") || s.created_at.includes("+") ? s.created_at : s.created_at + "Z")
-                  .toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })}
+                <td className="mono">{fmtIst(s.created_at, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}
                   {s.simulated && <div><span className="pill failed" style={{ fontSize: 10 }}>SIMULATED</span></div>}
                 </td>
                 <td><b>{s.rule}</b></td>
                 <td><b>{s.instrument}</b>{s.delta != null && <div className="muted">Δ {Number(s.delta).toFixed(2)}</div>}</td>
-                <td className="mono">≈ {inr(s.ep!)}</td>
-                <td className="mono" style={{ color: "var(--red)" }}>{inr(s.sl!)}</td>
-                <td className="mono" style={{ color: "var(--green)" }}>{inr(s.tp!)} <span className="muted">1:{s.rr}</span></td>
+                <td className="mono">≈ {inr(s.ep)}</td>
+                <td className="mono" style={{ color: "var(--red)" }}>{inr(s.sl)}</td>
+                <td className="mono" style={{ color: "var(--green)" }}>{inr(s.tp)} <span className="muted">{s.rr ? `1:${s.rr}` : ""}</span></td>
                 <td style={{ fontSize: 12 }}>
                   {s.sizing?.lots
                     ? <><b>{s.sizing.lots} lot{s.sizing.lots > 1 ? "s" : ""}</b>
@@ -190,10 +210,12 @@ export default function Scalp() {
             value={btCapital} onChange={(e) => setBtCapital(Number(e.target.value))} /></label>
           <label>Risk %/trade <input type="number" step="0.1" min="0.1" max="10" style={{ width: 60 }}
             value={btRisk} onChange={(e) => setBtRisk(Number(e.target.value))} /></label>
-          <button className="small" disabled={btBusy} onClick={runBacktest}>
+          <button className="small" disabled={btBusy || !btInputsOk} onClick={runBacktest}
+            title={btInputsOk ? "" : "Capital ≥ ₹10,000 and risk 0.1–10%"}>
             {btBusy ? "Replaying…" : "Run backtest"}
           </button>
-          {bt && <span className="muted">{bt.sessions.length} sessions: {bt.sessions[0]} → {bt.sessions[bt.sessions.length - 1]}</span>}
+          {bt && bt.sessions.length > 0 &&
+            <span className="muted">{bt.sessions.length} sessions: {bt.sessions[0]} → {bt.sessions[bt.sessions.length - 1]}</span>}
         </div>
         {bt && (
           <>
@@ -204,7 +226,7 @@ export default function Scalp() {
               <div className="stat"><div className="v" style={{ color: "var(--red)" }}>₹{Number(bt.summary.max_drawdown).toLocaleString("en-IN")}</div>
                 <div className="l">Max drawdown{bt.summary.skipped_unaffordable ? ` · ${bt.summary.skipped_unaffordable} skipped (0 lots)` : ""}</div></div>
               <div className="stat"><div className="v" style={{ color: bt.summary.total_r >= 0 ? "var(--green)" : "var(--red)" }}>
-                {bt.summary.total_r}R</div><div className="l">{bt.summary.n} signals · expectancy {bt.summary.expectancy_r ?? "—"}R</div></div>
+                {bt.summary.total_r}R</div><div className="l">{bt.summary.n_taken ?? bt.summary.n}/{bt.summary.n} signals taken · expectancy {bt.summary.expectancy_r ?? "—"}R</div></div>
               <div className="stat"><div className="v">{bt.summary.win_rate === null ? "—" : (bt.summary.win_rate * 100).toFixed(0) + "%"}</div>
                 <div className="l">Full-target rate (TP {bt.summary.tp} / SL {bt.summary.sl} / time {bt.summary.time_exits})</div></div>
             </div>
@@ -225,7 +247,7 @@ export default function Scalp() {
                     <td>{t.lots === 0 ? <span className="pill failed" style={{ fontSize: 10 }}>skip</span> : t.lots}</td>
                     <td className="mono">{t.outlay ? "₹" + Number(t.outlay).toLocaleString("en-IN") : "—"}</td>
                     <td className="mono" style={{ color: t.pnl >= 0 ? "var(--green)" : "var(--red)" }}>
-                      {t.pnl ? (t.pnl > 0 ? "+" : "") + Number(t.pnl).toLocaleString("en-IN") : "—"}</td>
+                      {t.lots > 0 ? (t.pnl > 0 ? "+" : "") + Number(t.pnl).toLocaleString("en-IN") : "—"}</td>
                     <td><span className={`pill ${t.outcome === "TP" ? "done" : t.outcome === "SL" ? "failed" : "interrupted"}`}>{t.outcome}</span>
                       <span className="muted" style={{ fontSize: 11 }}> {t.r > 0 ? "+" : ""}{t.r}R · {t.bars_held}m</span></td>
                     <td className="mono">₹{Number(t.equity).toLocaleString("en-IN")}</td>

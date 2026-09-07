@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { api, ProviderInfo, RunOut } from "../api";
+import { api, ProviderInfo, RunOut, istToday } from "../api";
 
 interface Options {
   analysts: { id: string; label: string; desc: string }[];
@@ -21,7 +21,7 @@ export default function NewAnalysis() {
   const [ticker, setTicker] = useState("NVDA");
   const [preview, setPreview] = useState<any>(null);
   const [previewErr, setPreviewErr] = useState("");
-  const [tradeDate, setTradeDate] = useState(new Date().toISOString().slice(0, 10));
+  const [tradeDate, setTradeDate] = useState(istToday());
   const [analysts, setAnalysts] = useState<string[]>(["market", "social", "news", "fundamentals"]);
   const [depth, setDepth] = useState(1);
   const [mode, setMode] = useState<"demo" | "engine">("demo");
@@ -183,7 +183,7 @@ export default function NewAnalysis() {
           </div>
           <div>
             <label>Analysis date</label>
-            <input type="date" value={tradeDate} max={new Date().toISOString().slice(0, 10)}
+            <input type="date" value={tradeDate} max={istToday()}
               onChange={(e) => setTradeDate(e.target.value)} />
           </div>
         </div>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import { api, istToday } from "../api";
 
 export default function Ensemble() {
   const [ensembles, setEnsembles] = useState<any[]>([]);
@@ -27,7 +27,7 @@ export default function Ensemble() {
         .map((label) => ({ label, mode: "demo" }));
       if (stacks.length < 2) throw new Error("Give at least two stack labels");
       await api.post("/api/ensembles", {
-        ticker: ticker.trim(), trade_date: new Date().toISOString().slice(0, 10),
+        ticker: ticker.trim(), trade_date: istToday(),
         research_depth: 1, stacks,
       });
       setMsg({ kind: "ok", text: "Ensemble launched — stacks run in parallel; the meta-judge rules when all finish." });

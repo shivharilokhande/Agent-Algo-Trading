@@ -60,8 +60,10 @@ def bs_greeks(spot: float, strike: float, iv_pct: float, t_years: float,
     d1 = (math.log(spot / strike) + (r + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t)
     d2 = d1 - sigma * sqrt_t
     delta = _norm_cdf(d1) if is_call else _norm_cdf(d1) - 1.0
+    # call: −S·φ(d1)·σ/(2√t) − r·K·e^(−rt)·N(d2);  put: … + r·K·e^(−rt)·N(−d2)
+    # (R5-4: the rate term's sign was inverted for both legs)
     theta_year = (-(spot * _norm_pdf(d1) * sigma) / (2 * sqrt_t)
-                  + (-1 if is_call else 1) * -r * strike * math.exp(-r * t)
+                  + (-1 if is_call else 1) * r * strike * math.exp(-r * t)
                   * _norm_cdf(d2 if is_call else -d2))
     vega = spot * _norm_pdf(d1) * sqrt_t / 100.0  # per 1 IV point
     return {"delta": round(delta, 3), "theta_day": round(theta_year / 365.0, 2),
@@ -73,8 +75,11 @@ def years_to_expiry(expiry: str | None) -> float:
     if not expiry:
         return 7 / 365
     try:
+        from zoneinfo import ZoneInfo
+
         dt = datetime.strptime(expiry, "%d-%b-%Y")
-        days = (dt - datetime.now()).total_seconds() / 86400 + 0.65  # expiry ~15:30 IST
+        now_ist = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+        days = (dt - now_ist).total_seconds() / 86400 + 0.65  # expiry ~15:30 IST
         return max(days, 0.5) / 365
     except ValueError:
         return 7 / 365
@@ -343,7 +348,7 @@ def fno_symbol_for(ticker: str) -> str | None:
 
 # ---------- trade card: the one simple table (structured, UI-rendered) ----------
 
-def _ladder_leg(ladder: list[dict], strike: float, side: str) -> dict | None:
+def _ladder_leg(ladder: list[dict], strike: float) -> dict | None:
     for r in ladder:
         if r["strike"] == strike:
             return r
@@ -396,7 +401,7 @@ def build_trade_card(snap: dict, rating: str, ticker: str) -> dict:
     bull_trigger = (resistance[0] if resistance else spot) + step
 
     def estimate_ep(strike: float, side: str, trigger: float) -> float | None:
-        leg = _ladder_leg(ladder, strike, side)
+        leg = _ladder_leg(ladder, strike)
         if leg is None:
             return None
         ltp = leg["ce_ltp" if side == "CE" else "pe_ltp"]

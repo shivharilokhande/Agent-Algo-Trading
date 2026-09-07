@@ -168,6 +168,9 @@ async def _trigger_loop() -> None:
                         log.info("Trigger fired: %s %+.1f%%", t.ticker, move)
                     except RunValidationError as exc:
                         log.info("Trigger run rejected %s: %s", t.ticker, exc)
+                    except Exception:  # noqa: BLE001 — R5: one bad trigger must
+                        log.exception("Trigger %s failed", t.id)  # not abort the sweep
+                        db.rollback()
         except Exception:  # pragma: no cover
             log.exception("Trigger sweep failed")
         await asyncio.sleep(TRIGGER_POLL_SECONDS)
@@ -222,6 +225,9 @@ async def _level_watch_loop() -> None:
                             t.enabled = False  # one-shot
                             t.last_fired_date = date.today().isoformat()
                             log.info("LEVEL HIT %s %s %s (spot %s)", symbol, t.type, t.threshold, spot)
+                        # R5: commit per symbol — a crash later in the sweep must
+                        # not resurrect already-fired one-shot alerts
+                        db.commit()
                     db.commit()
         except Exception:  # pragma: no cover
             log.exception("Level watch sweep failed")

@@ -107,7 +107,14 @@ def put_settings(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    """F10.1 — validate loudly, mirroring the engine's _coerce semantics."""
+    """F10.1 — validate loudly, mirroring the engine's _coerce semantics.
+
+    R5-1 (critical): PUT now MERGES into the stored config instead of replacing
+    it. Multiple pages (Settings, Scalp) each hold partial copies; full-replace
+    let whichever saved last silently wipe the other's keys (e.g. toggling a
+    scalp checkbox erasing trading_capital). Send a key with value null to
+    delete that key.
+    """
     for key, value in body.config.items():
         expected = _SETTING_VALIDATORS.get(key)
         if expected is None:
@@ -121,6 +128,15 @@ def put_settings(
     if row is None:
         row = Setting(user_id=user.id)
         db.add(row)
-    row.config_json = json.dumps(body.config)
+    if not body.config:
+        merged: dict = {}  # explicit empty object = reset everything (legacy semantics)
+    else:
+        merged = json.loads(row.config_json or "{}")
+        for key, value in body.config.items():
+            if value is None:
+                merged.pop(key, None)
+            else:
+                merged[key] = value
+    row.config_json = json.dumps(merged)
     db.commit()
-    return {"config": body.config}
+    return {"config": merged}

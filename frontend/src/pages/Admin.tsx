@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, fmtIst } from "../api";
 
 interface Stats {
   users: number; admins: number; runs_total: number;
@@ -119,8 +119,8 @@ export default function Admin() {
                 <td>{u.is_admin ? <span className="pill admin">admin</span> : <span className="pill pending">user</span>}</td>
                 <td>{u.runs}</td>
                 <td>{u.keys}</td>
-                <td className="muted">{u.last_run ? new Date(u.last_run).toLocaleString() : "—"}</td>
-                <td className="muted">{new Date(u.created_at).toLocaleDateString()}</td>
+                <td className="muted">{u.last_run ? fmtIst(u.last_run) : "—"}</td>
+                <td className="muted">{fmtIst(u.created_at, { dateStyle: "medium" })}</td>
                 <td className="row">
                   <button className="secondary small" onClick={() => toggleAdmin(u.id)}>
                     {u.is_admin ? "Demote" : "Make admin"}

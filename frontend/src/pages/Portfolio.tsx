@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import { api, fmtIst } from "../api";
 
 export default function Portfolio() {
   const [snap, setSnap] = useState<any>(null);
@@ -89,7 +89,7 @@ export default function Portfolio() {
                 <td className="mono">${p.entry_price}</td>
                 <td className="mono">{p.last_price ? `$${p.last_price}` : "—"}</td>
                 <td>{pnl(p.unrealized_pnl)}</td>
-                <td className="muted">{new Date(p.opened_at).toLocaleDateString()}</td>
+                <td className="muted">{fmtIst(p.opened_at, { dateStyle: "medium" })}</td>
                 <td><button className="danger small" disabled={busy === p.id} onClick={() => close(p.id)}>
                   {busy === p.id ? "…" : "Close"}</button></td>
               </tr>
@@ -111,7 +111,7 @@ export default function Portfolio() {
                 <td className="mono">${p.entry_price} → ${p.exit_price}</td>
                 <td>{pnl(p.realized_pnl)}</td>
                 <td className="muted">{p.close_reason}</td>
-                <td className="muted">{p.closed_at ? new Date(p.closed_at).toLocaleString() : "—"}</td>
+                <td className="muted">{p.closed_at ? fmtIst(p.closed_at) : "—"}</td>
               </tr>
             ))}
             {closed.length === 0 && <tr><td colSpan={5} className="muted">Nothing closed yet.</td></tr>}

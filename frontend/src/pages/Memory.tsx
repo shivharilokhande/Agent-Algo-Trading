@@ -9,9 +9,11 @@ export default function Memory() {
   const [err, setErr] = useState("");
 
   async function load() {
-    setEntries(await api.get<MemoryOut[]>("/api/memory"));
-    setStats(await api.get("/api/memory/stats"));
-    setDesk(await api.get<any[]>("/api/desk-review").catch(() => []) as any[]);
+    try {
+      setEntries(await api.get<MemoryOut[]>("/api/memory"));
+      setStats(await api.get("/api/memory/stats"));
+      setDesk(await api.get<any[]>("/api/desk-review").catch(() => []) as any[]);
+    } catch (ex: any) { setErr(ex.message); }
   }
   useEffect(() => { load(); }, []);
 
@@ -70,7 +72,7 @@ export default function Memory() {
                   <td className="mono">{(a.avg_alpha_when_called * 100).toFixed(2)}%</td>
                   <td className="muted">{a.bias.bullish}/{a.bias.bearish}/{a.bias.hold}</td>
                   <td><span className={`pill ${a.verdict === "ok" ? "done" : a.verdict === "watch" ? "interrupted" : "failed"}`}>
-                    {a.verdict}</span></td>
+                    {String(a.verdict).startsWith("bench") ? "bench" : a.verdict}</span></td>
                 </tr>
               ))}
             </tbody>
@@ -94,7 +96,7 @@ export default function Memory() {
                 <td>{e.trade_date}</td>
                 <td><span className={`rating ${e.rating}`}>{e.rating}</span></td>
                 <td><span className={`pill ${e.status}`}>{e.status}</span></td>
-                <td className={e.raw_return !== null && e.raw_return < 0 ? "mono" : "mono"}
+                <td className="mono"
                   style={{ color: e.raw_return === null ? undefined : e.raw_return >= 0 ? "var(--green)" : "var(--red)" }}>
                   {pct(e.raw_return)}
                 </td>

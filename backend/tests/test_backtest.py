@@ -93,9 +93,12 @@ def test_backtest_symbol_walkforward(monkeypatch):
         closes.append(px)
     session = {"2026-09-04": _bars(closes)}
     monkeypatch.setattr(bt, "fetch_history_sessions", lambda s, d=7: session)
-    out = bt.backtest_symbol("NIFTY", 7)
+    out = bt.backtest_symbol("NIFTY", 7, capital=1_000_000, risk_pct=2.0)
     assert out["summary"]["n"] >= 1
     assert all(t["rule"] in ("ORB", "VWAP_RECLAIM") for t in out["trades"])
-    assert out["summary"]["tp"] + out["summary"]["sl"] + out["summary"]["time_exits"] == out["summary"]["n"]
+    # R-stats cover TAKEN trades only (R5-19)
+    s = out["summary"]
+    assert s["tp"] + s["sl"] + s["time_exits"] == s["n_taken"]
+    assert s["n_taken"] + s["skipped_unaffordable"] == s["n"]
     # theta cutoff respected: no trade at/after 14:30
     assert all(t["time"] < "14:30" for t in out["trades"])

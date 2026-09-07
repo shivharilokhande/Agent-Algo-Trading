@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, RunOut } from "../api";
+import { api, RunOut, istToday } from "../api";
 
 const INDICES = [
   { alias: "NIFTY", label: "NIFTY 50" },
@@ -34,7 +34,7 @@ export default function FnoDesk() {
     try {
       const run = await api.post<RunOut>("/api/runs", {
         ticker,
-        trade_date: new Date().toISOString().slice(0, 10),
+        trade_date: istToday(),
         research_depth: depth,
         mode,
         fno_mode: true,

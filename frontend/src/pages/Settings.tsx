@@ -28,12 +28,14 @@ export default function Settings() {
   const [presets, setPresets] = useState<any[]>([]);
 
   async function load() {
-    const p = await api.get<any>("/api/catalog/providers");
-    setProviders(p.llm_providers);
-    setDataProviders(p.data_providers);
-    setKeys(await api.get<KeyOut[]>("/api/keys"));
-    setDefaults((await api.get<{ config: any }>("/api/settings")).config || {});
-    setPresets(await api.get<any[]>("/api/presets"));
+    try {
+      const p = await api.get<any>("/api/catalog/providers");
+      setProviders(p.llm_providers);
+      setDataProviders(p.data_providers);
+      setKeys(await api.get<KeyOut[]>("/api/keys"));
+      setDefaults((await api.get<{ config: any }>("/api/settings")).config || {});
+      setPresets(await api.get<any[]>("/api/presets"));
+    } catch (ex: any) { setMsg({ kind: "error", text: ex.message }); }  // R5
   }
   useEffect(() => { load(); }, []);
 
@@ -77,7 +79,10 @@ export default function Settings() {
   async function saveDefaults() {
     setMsg(null);
     try {
-      await api.put("/api/settings", { config: defaults });
+      // R5-1: server merges — refresh local copy from the response so this page
+      // can never revert scalp_* keys saved from the Scalp page meanwhile
+      const res = await api.put<{ config: any }>("/api/settings", { config: defaults });
+      setDefaults(res.config || {});
       setMsg({ kind: "ok", text: "Defaults saved — applied to every new analysis." });
     } catch (ex: any) {
       setMsg({ kind: "error", text: ex.message });

@@ -39,7 +39,7 @@ def extract_call(text: str) -> str | None:
     if not m:
         return None
     call = m.group(1).capitalize()
-    return call if call in _RATINGS else {"Overweight": "Overweight"}.get(call)
+    return call if call in _RATINGS else None
 
 
 def record_agent_calls(run_id: str) -> int:

@@ -51,6 +51,23 @@ export const api = {
   del: <T>(p: string) => req<T>("DELETE", p),
 };
 
+// R5-9: one shared timestamp formatter — backend datetimes are UTC but often
+// serialized WITHOUT a zone suffix; normalize, then always render in IST.
+export function fmtIst(ts: string | null | undefined,
+                       opts: Intl.DateTimeFormatOptions =
+                         { dateStyle: "medium", timeStyle: "short" }): string {
+  if (!ts) return "—";
+  const iso = ts.endsWith("Z") || ts.includes("+") ? ts : ts + "Z";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return ts;
+  return d.toLocaleString("en-IN", { ...opts, timeZone: "Asia/Kolkata" });
+}
+
+// R5-14: today's date in IST (an Indian-market app must not flip dates at UTC midnight)
+export function istToday(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+}
+
 // S3: mint a short-lived, run-scoped ticket so the JWT never rides a URL
 export async function runStreamUrl(runId: string): Promise<string> {
   const { ticket } = await api.post<{ ticket: string }>(`/api/runs/${runId}/stream-ticket`);

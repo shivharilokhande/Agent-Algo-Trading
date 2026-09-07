@@ -11,8 +11,6 @@ not available for free.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from .scalp import (
     COOLDOWN_MIN,
@@ -25,7 +23,7 @@ from .scalp import (
 )
 
 log = logging.getLogger("agentalgo.backtest")
-IST = ZoneInfo("Asia/Kolkata")
+from .scalp import IST, _YF_SYMBOL  # shared: one tz + one symbol map (R5 dead-code sweep)
 
 ASSUMED_IV = 13.0        # fallback ATM IV (%) when India VIX is unavailable
 ASSUMED_DELTA = 0.50     # scalp strikes are picked at |Δ|≈0.5 live
@@ -58,7 +56,7 @@ def model_premium(spot: float, day_iso: str, symbol: str,
     exp = datetime.strptime(assumed_expiry(symbol, day_iso), "%d-%b-%Y").date()
     dte = max((exp - date.fromisoformat(day_iso)).days, 0.5)
     return round(0.4 * spot * (sigma / 100) * (dte / 365) ** 0.5, 2)
-_YF = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK", "FINNIFTY": "NIFTY_FIN_SERVICE.NS"}
+_YF = _YF_SYMBOL  # alias — single source of truth lives in scalp.py
 _STRIKE_STEP = {"NIFTY": 50, "BANKNIFTY": 100, "FINNIFTY": 50}
 
 
@@ -217,9 +215,13 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
                     risk_pct: float = 1.0) -> dict:
     """Walk each session bar-by-bar through evaluate_rules; simulate every signal.
 
-    Rupee simulation: live sizing rules applied on RUNNING equity (compounding) —
-    lots = risk budget ÷ risk per lot, premium outlay capped at 30% of equity.
-    Trades the equity can't afford (0 lots) are recorded as skipped.
+    Rupee simulation (R5-5, no look-ahead): P&L settles at the trade's EXIT bar,
+    never at entry, and while a trade is open its premium outlay is reserved —
+    a second overlapping signal is sized on equity minus open outlay, so future
+    profits can never fund a position and concurrent outlay can't stack past
+    the cap. Trades the free equity can't afford (0 lots) are recorded as skipped.
+    Cooldown compares bar TIMESTAMPS (minutes), matching the live 30-min clock
+    even when the feed has missing bars (R5-13).
     """
     from .fno import DEFAULT_LOT_SIZES, size_position
 
@@ -230,45 +232,73 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
     equity = capital
     peak_equity, max_dd = capital, 0.0
     skipped = 0
+
+    def _mins(hm: tuple[int, int]) -> int:
+        return hm[0] * 60 + hm[1]
+
     for day, bars in sessions.items():
-        last_fire: dict[str, int] = {}  # rule -> bar index (cooldown)
+        last_fire: dict[str, int] = {}  # rule -> minutes-of-day (cooldown)
+        open_trades: list[dict] = []    # [{exit_i, pnl, outlay, rec}]
+        open_outlay = 0.0
+
+        def _settle_until(bar_i: int) -> None:
+            nonlocal equity, peak_equity, max_dd, open_outlay
+            for ot in sorted([o for o in open_trades if o["exit_i"] <= bar_i],
+                             key=lambda o: o["exit_i"]):
+                equity = round(equity + ot["pnl"], 2)
+                open_outlay = round(open_outlay - ot["outlay"], 2)
+                peak_equity = max(peak_equity, equity)
+                max_dd = max(max_dd, peak_equity - equity)
+                ot["rec"]["equity"] = equity
+                open_trades.remove(ot)
+
         for i in range(OPENING_RANGE_MIN + 5, len(bars)):
             if bars[i]["hm"] >= THETA_CUTOFF:
                 break
             hits = evaluate_rules(bars[: i + 1])  # no OI walls in history
+            if not hits:
+                continue
+            _settle_until(i)  # realize anything that exited before this bar
             for hit in hits:
-                if i - last_fire.get(hit["rule"], -10_000) < COOLDOWN_MIN:
+                now_min = _mins(bars[i]["hm"])
+                if now_min - last_fire.get(hit["rule"], -10_000) < COOLDOWN_MIN:
                     continue
-                last_fire[hit["rule"]] = i
+                last_fire[hit["rule"]] = now_min
                 spot0 = bars[i]["c"]
                 ep = model_premium(spot0, day, symbol, vix.get(day))
                 sim = _simulate_trade(bars, i, hit["direction"], ep)
                 risk = round(ep * SCALP_SL_PCT / 100, 2)
                 exit_p = round(ep + sim["r"] * risk, 2)
-                sizing = size_position(ep, round(ep - risk, 2), lot, equity, risk_pct)
+                free_equity = max(equity - open_outlay, 0.0)
+                sizing = size_position(ep, round(ep - risk, 2), lot, free_equity, risk_pct)
                 lots = sizing.get("lots") or 0
                 pnl = round(sim["r"] * risk * lot * lots, 2) if lots else 0.0
-                if lots:
-                    equity = round(equity + pnl, 2)
-                    peak_equity = max(peak_equity, equity)
-                    max_dd = max(max_dd, peak_equity - equity)
-                else:
-                    skipped += 1
-                trades.append({
+                outlay = round(ep * lot * lots, 2) if lots else 0.0
+                rec = {
                     "day": day, "time": bars[i]["t"][11:16], "rule": hit["rule"],
                     "direction": hit["direction"], "spot": round(spot0, 1),
                     "instrument": atm_instrument(symbol, spot0, hit["direction"]),
                     "expiry": assumed_expiry(symbol, day),
                     "entry": ep, "exit": exit_p, "lots": lots,
-                    "outlay": round(ep * lot * lots, 2) if lots else 0.0,
-                    "pnl": pnl, "equity": equity,
+                    "outlay": outlay, "pnl": pnl, "equity": equity,
                     "why": hit["why"], **sim,
-                })
-    wins = [t for t in trades if t["outcome"] == "TP"]
-    losses = [t for t in trades if t["outcome"] == "SL"]
-    total_r = round(sum(t["r"] for t in trades), 2)
+                }
+                trades.append(rec)
+                if lots:
+                    open_trades.append({"exit_i": i + sim["bars_held"], "pnl": pnl,
+                                        "outlay": outlay, "rec": rec})
+                    open_outlay = round(open_outlay + outlay, 2)
+                else:
+                    skipped += 1
+        _settle_until(10**9)  # end of session: realize everything still open
+
+    # R5-19: R statistics over TAKEN trades only; skipped rows carry no result
+    taken = [t for t in trades if t["lots"]]
+    wins = [t for t in taken if t["outcome"] == "TP"]
+    losses = [t for t in taken if t["outcome"] == "SL"]
+    total_r = round(sum(t["r"] for t in taken), 2)
     by_rule: dict[str, dict] = {}
-    for t in trades:
+    for t in taken:
         b = by_rule.setdefault(t["rule"], {"n": 0, "tp": 0, "sl": 0, "time": 0, "r": 0.0})
         b["n"] += 1
         b["r"] = round(b["r"] + t["r"], 2)
@@ -287,11 +317,12 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
         },
         "trades": trades,
         "summary": {
-            "n": len(trades), "tp": len(wins), "sl": len(losses),
-            "time_exits": len(trades) - len(wins) - len(losses),
-            "win_rate": round(len(wins) / len(trades), 3) if trades else None,
+            "n": len(trades), "n_taken": len(taken),
+            "tp": len(wins), "sl": len(losses),
+            "time_exits": len(taken) - len(wins) - len(losses),
+            "win_rate": round(len(wins) / len(taken), 3) if taken else None,
             "total_r": total_r,
-            "expectancy_r": round(total_r / len(trades), 3) if trades else None,
+            "expectancy_r": round(total_r / len(taken), 3) if taken else None,
             "capital_start": capital, "capital_end": equity,
             "net_pnl": round(equity - capital, 2),
             "return_pct": round((equity - capital) / capital * 100, 2) if capital else None,

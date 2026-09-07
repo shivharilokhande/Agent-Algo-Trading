@@ -240,21 +240,33 @@ def fetch_session_bars(symbol: str) -> list[dict]:
     return bars
 
 
-def day_bias(user_id: str, symbol: str) -> str | None:
-    """Rating of the user's latest completed engine run today for this instrument."""
+def day_bias(user_id: str, symbol: str, with_age: bool = False):
+    """Rating of the user's latest completed engine run for this instrument.
+
+    R5-7: a stale (non-today) rating no longer silently drives the filter —
+    callers get None unless the run finished today; `with_age=True` returns
+    {rating, as_of, today} so the UI can show the age explicitly.
+    """
     from .db import SessionLocal
     from .models import Run
 
-    ticker_map = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK"}
+    # R5-6: FINNIFTY was missing — Run.ticker stores the normalized symbol
+    ticker_map = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK",
+                  "FINNIFTY": "NIFTY_FIN_SERVICE.NS"}
     ticker = ticker_map.get(symbol, symbol)
     with SessionLocal() as db:
         run = (db.query(Run)
                .filter(Run.user_id == user_id, Run.ticker == ticker,
                        Run.mode == "engine", Run.status == "done")
                .order_by(Run.finished_at.desc()).first())
-        if run and run.finished_at and run.finished_at.date() == datetime.now(IST).date():
-            return run.rating
-        return run.rating if run else None  # stale bias is better than none; UI shows age
+        is_today = bool(run and run.finished_at
+                        and run.finished_at.date() == datetime.now(IST).date())
+        rating = run.rating if (run and is_today) else None
+        if with_age:
+            return {"rating": run.rating if run else None,
+                    "as_of": run.finished_at.date().isoformat() if run and run.finished_at else None,
+                    "today": is_today}
+        return rating
 
 
 # --- signal persistence + notification ------------------------------------------
@@ -263,7 +275,9 @@ def _notify_mac(title: str, message: str) -> None:
     """macOS desktop notification (best effort — backend runs on the user's Mac)."""
     try:
         script = f'display notification "{message}" with title "{title}" sound name "Glass"'
-        subprocess.run(["osascript", "-e", script], timeout=5, capture_output=True)
+        # R5: fire-and-forget — a blocking run(timeout=5) could stall the event loop
+        subprocess.Popen(["osascript", "-e", script],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:  # noqa: BLE001
         pass
 
@@ -277,9 +291,13 @@ def emit_signal(user_id: str, sig: dict, simulated: bool = False) -> str | None:
         from datetime import timezone
 
         cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=COOLDOWN_MIN)
+        # R5-3: simulated and real signals keep SEPARATE cooldowns — a test
+        # signal must never suppress (or be suppressed by) a real one
         dup = (db.query(ScalpSignal)
                .filter(ScalpSignal.user_id == user_id, ScalpSignal.symbol == sig["symbol"],
-                       ScalpSignal.rule == sig["rule"], ScalpSignal.created_at >= cutoff)
+                       ScalpSignal.rule == sig["rule"],
+                       ScalpSignal.simulated.is_(simulated),
+                       ScalpSignal.created_at >= cutoff)
                .first())
         if dup:
             return None
@@ -307,7 +325,30 @@ def emit_signal(user_id: str, sig: dict, simulated: bool = False) -> str | None:
 # --- the loop --------------------------------------------------------------------
 
 SCALP_POLL_SECONDS = 45
+BARS_CACHE_TTL = 60  # R5: must exceed the poll interval or the cache never hits
 _last_bars_fetch: dict[str, tuple[float, list[dict]]] = {}
+
+
+def usable_session_bars(bars: list[dict], now_ist: datetime) -> list[dict]:
+    """Guard the live feed (R5-2, R5-8):
+
+    - HOLIDAY/STALE GUARD: on an NSE holiday yfinance returns the previous
+      session's bars — reject any bar set whose last bar isn't from today
+      or is more than 10 minutes old.
+    - FORMING-BAR PARITY: the last 1m bar is still forming intraday; rules
+      must see only COMPLETED bars (the backtest replays completed bars), so
+      drop the bar for the current minute.
+    """
+    if not bars:
+        return []
+    last = datetime.fromisoformat(bars[-1]["t"])
+    if last.date() != now_ist.date():
+        return []  # previous session (holiday / feed outage) — never signal on it
+    if (now_ist - last).total_seconds() > 600:
+        return []  # feed stalled mid-session
+    if (last.hour, last.minute) == (now_ist.hour, now_ist.minute):
+        return bars[:-1]  # drop the in-progress bar
+    return bars
 
 
 async def scalp_sweep() -> int:
@@ -335,11 +376,15 @@ async def scalp_sweep() -> int:
         try:
             now = time.time()
             cached = _last_bars_fetch.get(symbol)
-            if cached and now - cached[0] < 40:
+            if cached and now - cached[0] < BARS_CACHE_TTL:
                 bars = cached[1]
             else:
                 bars = await asyncio.to_thread(fetch_session_bars, symbol)
                 _last_bars_fetch[symbol] = (now, bars)
+            bars = usable_session_bars(bars, datetime.now(IST))
+            if not bars:
+                log.info("Scalp: no usable session bars for %s (holiday/stale feed?)", symbol)
+                continue
             snapshot = await get_fno_snapshot(symbol)
             walls = {"resistance": (snapshot.get("resistance_strikes") or [{}])[0].get("strike"),
                      "support": (snapshot.get("support_strikes") or [{}])[0].get("strike")}
@@ -352,12 +397,13 @@ async def scalp_sweep() -> int:
         for user_id, cfg in users:
             if symbol not in (cfg.get("scalp_symbols") or ["NIFTY"]):
                 continue
-            bias = day_bias(user_id, symbol)
+            # R5: keep blocking DB work off the event loop
+            bias = await asyncio.to_thread(day_bias, user_id, symbol)
             for hit in hits:
                 if not bias_allows(hit["direction"], bias):
                     continue
                 sig = build_scalp_signal(symbol, hit, snapshot, cfg)
-                if sig and emit_signal(user_id, sig):
+                if sig and await asyncio.to_thread(emit_signal, user_id, sig):
                     emitted += 1
     return emitted
 

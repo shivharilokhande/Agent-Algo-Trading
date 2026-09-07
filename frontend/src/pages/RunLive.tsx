@@ -164,9 +164,14 @@ export default function RunLive() {
   const [wsState, setWsState] = useState("connecting");
   const feedRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const [pageErr, setPageErr] = useState("");
 
   async function refreshRun() {
-    if (id) setRun(await api.get<RunOut>(`/api/runs/${id}`));
+    if (!id) return;
+    try {
+      setRun(await api.get<RunOut>(`/api/runs/${id}`));
+      setPageErr("");
+    } catch (ex: any) { setPageErr(ex.message); }  // R5: no unhandled rejection
   }
 
   useEffect(() => {
@@ -250,12 +255,17 @@ export default function RunLive() {
     refreshRun();
   }
   async function resume() {
-    setFeed([]); setSections({}); setAgentStatus({});
-    await api.post(`/api/runs/${id}/resume`);
-    window.location.reload();
+    try {
+      // R5: only clear the page AFTER the resume is accepted
+      await api.post(`/api/runs/${id}/resume`);
+      setFeed([]); setSections({}); setAgentStatus({});
+      window.location.reload();
+    } catch (ex: any) { setPageErr(ex.message); }
   }
 
-  if (!run) return <p className="muted">Loading…</p>;
+  if (!run) return pageErr
+    ? <div className="error-box">{pageErr}</div>
+    : <p className="muted">Loading…</p>;
   const doneAgents = Object.values(agentStatus).filter((s) => s === "done").length;
   const progress = run.status === "done" ? 100 : Math.round((doneAgents / 12) * 100);
   const sectionKeys = SECTION_ORDER.filter((s) => sections[s]);
@@ -280,12 +290,16 @@ export default function RunLive() {
         {run.status === "done" && (
           <a href="#" onClick={async (e) => {
             e.preventDefault();
-            const md = await api.get<string>(`/api/runs/${run.id}/report.md`);
-            const blob = new Blob([md], { type: "text/markdown" });
-            const a = document.createElement("a");
-            a.href = URL.createObjectURL(blob);
-            a.download = `${run.ticker}_${run.trade_date}_report.md`;
-            a.click();
+            try {
+              const md = await api.get<string>(`/api/runs/${run.id}/report.md`);
+              const blob = new Blob([md], { type: "text/markdown" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `${run.ticker}_${run.trade_date}_report.md`;
+              a.click();
+              setTimeout(() => URL.revokeObjectURL(url), 5000);  // R5: no leak
+            } catch (ex: any) { setPageErr(ex.message); }
           }}>⬇ Export report.md</a>
         )}
         <span className="muted">stream: {wsState}</span>
@@ -296,6 +310,7 @@ export default function RunLive() {
       {run.status === "paused" && <HitlPanel runId={run.id} />}
 
       {run.error && <div className="error-box">{run.error}</div>}
+      {pageErr && <div className="error-box">{pageErr}</div>}
       {run.rating === "REVIEW" && (
         <div className="error-box">
           The decision had no parseable rating (REVIEW) — re-run rather than treating this as Hold.

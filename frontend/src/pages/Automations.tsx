@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import { api, fmtIst } from "../api";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -155,7 +155,7 @@ export default function Automations() {
           <tbody>
             {alerts.map((a) => (
               <tr key={a.id} style={{ opacity: a.read ? 0.55 : 1 }}>
-                <td className="muted">{new Date(a.created_at).toLocaleString()}</td>
+                <td className="muted">{fmtIst(a.created_at)}</td>
                 <td><b>{a.ticker}</b></td>
                 <td><span className={`pill ${a.type === "review" ? "interrupted" : "running"}`}>{a.type.replace("_", " ")}</span></td>
                 <td>{a.message}</td>
