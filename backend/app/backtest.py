@@ -27,22 +27,37 @@ from .scalp import (
 log = logging.getLogger("agentalgo.backtest")
 IST = ZoneInfo("Asia/Kolkata")
 
-ASSUMED_IV = 13.0        # ATM implied volatility (%) for the premium model
+ASSUMED_IV = 13.0        # fallback ATM IV (%) when India VIX is unavailable
 ASSUMED_DELTA = 0.50     # scalp strikes are picked at |Δ|≈0.5 live
+# index vol vs India VIX (VIX tracks NIFTY; bank/fin indices run hotter)
+_VIX_MULT = {"NIFTY": 1.0, "BANKNIFTY": 1.25, "FINNIFTY": 1.1}
 
 
-def model_premium(spot: float, day_iso: str, symbol: str) -> float:
+def fetch_vix_map(days: int = 12) -> dict[str, float]:
+    """ISO date -> India VIX close, for calibrating the premium model per day."""
+    import yfinance as yf
+
+    try:
+        closes = yf.Ticker("^INDIAVIX").history(period=f"{days + 5}d")["Close"].dropna()
+        return {ts.date().isoformat(): float(v) for ts, v in closes.items()}
+    except Exception:  # noqa: BLE001 — model falls back to ASSUMED_IV
+        return {}
+
+
+def model_premium(spot: float, day_iso: str, symbol: str,
+                  iv: float | None = None) -> float:
     """ATM premium via Brenner–Subrahmanyam: 0.4 · S · σ · √T to the nearest expiry.
 
-    Verified against reality: 02-Sep-2026 (6 days to the 08-Sep weekly), spot
-    23,842 → model ≈ ₹152 vs the actual 23850 CE ≈ ₹165. Expiry-eve premiums
-    land near 0.28% of spot, which the old flat model assumed for EVERY day —
-    badly underpricing early-week entries (user-caught bug)."""
+    σ comes from that day's India VIX (× index multiplier) when available.
+    Verified against reality (both user-caught): 02-Sep, 6 days to expiry,
+    VIX-calibrated ≈ real ₹165; 07-Sep expiry-eve, VIX 10.68 → ₹53.2 vs the
+    real 23800 PE at ₹53.50 (a flat 13% IV had said ₹64.8)."""
     from datetime import date, datetime
 
+    sigma = (iv if iv else ASSUMED_IV) * _VIX_MULT.get(symbol, 1.0)
     exp = datetime.strptime(assumed_expiry(symbol, day_iso), "%d-%b-%Y").date()
     dte = max((exp - date.fromisoformat(day_iso)).days, 0.5)
-    return round(0.4 * spot * (ASSUMED_IV / 100) * (dte / 365) ** 0.5, 2)
+    return round(0.4 * spot * (sigma / 100) * (dte / 365) ** 0.5, 2)
 _YF = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK", "FINNIFTY": "NIFTY_FIN_SERVICE.NS"}
 _STRIKE_STEP = {"NIFTY": 50, "BANKNIFTY": 100, "FINNIFTY": 50}
 
@@ -164,6 +179,7 @@ def _simulate_policy(bars: list[dict], i: int, direction: str, policy: str,
 def compare_exit_policies(symbol: str, days: int = 7) -> dict:
     """Same signals, three exit policies, side-by-side summaries."""
     sessions = fetch_history_sessions(symbol, days)
+    vix = fetch_vix_map(days)
     signals: list[tuple[list[dict], int, str, str, str]] = []
     for day, bars in sessions.items():
         last_fire: dict[str, int] = {}
@@ -179,7 +195,7 @@ def compare_exit_policies(symbol: str, days: int = 7) -> dict:
     out: dict = {"symbol": symbol, "sessions": list(sessions.keys()),
                  "n_signals": len(signals), "policies": {}}
     for name, p in policies.items():
-        rs = [_simulate_policy(bars, i, d, p, model_premium(bars[i]["c"], day, symbol))
+        rs = [_simulate_policy(bars, i, d, p, model_premium(bars[i]["c"], day, symbol, vix.get(day)))
               for bars, i, d, _, day in signals]
         total = round(sum(x["r"] for x in rs), 2)
         winners = [x["r"] for x in rs if x["r"] > 0.05]
@@ -209,6 +225,7 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
 
     lot = DEFAULT_LOT_SIZES.get(symbol)
     sessions = fetch_history_sessions(symbol, days)
+    vix = fetch_vix_map(days)
     trades: list[dict] = []
     equity = capital
     peak_equity, max_dd = capital, 0.0
@@ -224,7 +241,7 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
                     continue
                 last_fire[hit["rule"]] = i
                 spot0 = bars[i]["c"]
-                ep = model_premium(spot0, day, symbol)
+                ep = model_premium(spot0, day, symbol, vix.get(day))
                 sim = _simulate_trade(bars, i, hit["direction"], ep)
                 risk = round(ep * SCALP_SL_PCT / 100, 2)
                 exit_p = round(ep + sim["r"] * risk, 2)
@@ -260,7 +277,8 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
         "symbol": symbol,
         "sessions": list(sessions.keys()),
         "assumptions": {
-            "premium_model": f"0.4·S·σ·√T (σ={ASSUMED_IV}% IV, T to nearest expiry)",
+            "premium_model": ("0.4·S·σ·√T — σ from each day's India VIX close"
+                              f" (fallback {ASSUMED_IV}%), T to nearest expiry"),
             "delta": ASSUMED_DELTA,
             "sl_pct": SCALP_SL_PCT, "rr": SCALP_RR, "time_stop_min": SCALP_TIME_STOP_MIN,
             "note": ("Premium P&L modeled (Δ×spot move); WALL_REJECT excluded — no "
