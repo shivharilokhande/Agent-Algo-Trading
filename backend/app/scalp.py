@@ -65,10 +65,20 @@ def rsi(closes: list[float], length: int = RSI_LEN) -> float | None:
 
 
 def vwap(bars: list[dict]) -> float | None:
-    """bars: [{h,l,c,v}] intraday session bars."""
-    pv = sum(((b["h"] + b["l"] + b["c"]) / 3) * b["v"] for b in bars)
+    """bars: [{h,l,c,v}] intraday session bars.
+
+    NSE index feeds (yfinance ^NSEI/^NSEBANK) report zero volume, so when the
+    session has no volume we fall back to the equal-weighted typical-price mean
+    — same anchor concept, no volume weighting.
+    """
+    if not bars:
+        return None
     vol = sum(b["v"] for b in bars)
-    return round(pv / vol, 2) if vol else None
+    if vol:
+        pv = sum(((b["h"] + b["l"] + b["c"]) / 3) * b["v"] for b in bars)
+        return round(pv / vol, 2)
+    tp = [(b["h"] + b["l"] + b["c"]) / 3 for b in bars]
+    return round(sum(tp) / len(tp), 2)
 
 
 def opening_range(bars: list[dict]) -> tuple[float, float] | None:

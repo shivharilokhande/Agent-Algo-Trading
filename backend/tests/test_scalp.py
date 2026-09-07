@@ -19,6 +19,9 @@ def test_indicators():
     assert ema(closes, 9) is not None and ema(closes, 9) > ema(closes, 20)
     assert rsi(closes) == 100.0  # monotonic up
     assert vwap(bars) is not None
+    # NSE index feeds report zero volume — VWAP must fall back, never go None
+    zero_vol = [{**b, "v": 0.0} for b in bars]
+    assert vwap(zero_vol) is not None
     orh, orl = opening_range(bars)
     assert orh == closes[14] + 2 and orl == closes[0] - 2
     assert ema([1, 2], 9) is None and rsi([1, 2]) is None  # insufficient data
