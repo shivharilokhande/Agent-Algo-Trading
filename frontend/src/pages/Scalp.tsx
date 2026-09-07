@@ -245,8 +245,9 @@ export default function Scalp() {
                 <div className="l">Max drawdown{bt.summary.skipped_unaffordable ? ` · ${bt.summary.skipped_unaffordable} skipped (0 lots)` : ""}</div></div>
               <div className="stat"><div className="v" style={{ color: bt.summary.total_r >= 0 ? "var(--green)" : "var(--red)" }}>
                 {bt.summary.total_r}R</div><div className="l">{bt.summary.n_taken ?? bt.summary.n}/{bt.summary.n} signals taken · expectancy {bt.summary.expectancy_r ?? "—"}R</div></div>
-              <div className="stat"><div className="v">{bt.summary.win_rate === null ? "—" : (bt.summary.win_rate * 100).toFixed(0) + "%"}</div>
-                <div className="l">Full-target rate (TP {bt.summary.tp} / SL {bt.summary.sl} / time {bt.summary.time_exits})</div></div>
+              <div className="stat"><div className="v" style={{ color: (bt.summary.profit_rate ?? 0) >= 0.5 ? "var(--green)" : undefined }}>
+                {bt.summary.profit_rate == null ? "—" : (bt.summary.profit_rate * 100).toFixed(0) + "%"}</div>
+                <div className="l">WIN rate ({bt.summary.profitable}/{bt.summary.n_taken} net-profitable) · full-TP {bt.summary.win_rate == null ? "—" : (bt.summary.win_rate * 100).toFixed(0) + "%"} (TP {bt.summary.tp} / SL {bt.summary.sl} / time {bt.summary.time_exits})</div></div>
             </div>
             <table style={{ marginTop: 8 }}>
               <thead><tr><th>Day</th><th>Entry time</th><th>Exit time</th><th>Rule</th><th>Buy</th>

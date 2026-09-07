@@ -329,6 +329,7 @@ def backtest_combined(days: int = 7, capital: float = 100_000.0,
 
     wins = [t for t in trades if t["outcome"] == "TP"]
     losses = [t for t in trades if t["outcome"] == "SL"]
+    profitable = sum(1 for t in trades if t["pnl"] > 0)  # net of charges
     total_r = round(sum(t["r"] for t in trades), 2)
     return {
         "symbol": "COMBINED (" + "+".join(symbols) + f", max {MAX_CONCURRENT} open)",
@@ -349,6 +350,8 @@ def backtest_combined(days: int = 7, capital: float = 100_000.0,
             "tp": len(wins), "sl": len(losses),
             "time_exits": len(trades) - len(wins) - len(losses),
             "win_rate": round(len(wins) / len(trades), 3) if trades else None,
+            "profit_rate": round(profitable / len(trades), 3) if trades else None,
+            "profitable": profitable,
             "total_r": total_r,
             "expectancy_r": round(total_r / len(trades), 3) if trades else None,
             "capital_start": capital, "capital_end": equity,
@@ -489,6 +492,7 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
     taken = [t for t in trades if t["lots"]]
     wins = [t for t in taken if t["outcome"] == "TP"]
     losses = [t for t in taken if t["outcome"] == "SL"]
+    profitable = sum(1 for t in taken if t["pnl"] > 0)  # net of charges
     total_r = round(sum(t["r"] for t in taken), 2)
     by_rule: dict[str, dict] = {}
     for t in taken:
@@ -515,6 +519,8 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
             "tp": len(wins), "sl": len(losses),
             "time_exits": len(taken) - len(wins) - len(losses),
             "win_rate": round(len(wins) / len(taken), 3) if taken else None,
+            "profit_rate": round(profitable / len(taken), 3) if taken else None,
+            "profitable": profitable,
             "total_r": total_r,
             "expectancy_r": round(total_r / len(taken), 3) if taken else None,
             "capital_start": capital, "capital_end": equity,
