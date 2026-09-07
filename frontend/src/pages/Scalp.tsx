@@ -209,7 +209,7 @@ export default function Scalp() {
                 <div className="l">Full-target rate (TP {bt.summary.tp} / SL {bt.summary.sl} / time {bt.summary.time_exits})</div></div>
             </div>
             <table style={{ marginTop: 8 }}>
-              <thead><tr><th>Day</th><th>Entry time</th><th>Exit time</th><th>Rule</th><th>Dir</th>
+              <thead><tr><th>Day</th><th>Entry time</th><th>Exit time</th><th>Rule</th><th>Buy</th>
                 <th>Entry ₹ (premium)</th><th>Exit ₹ (premium)</th>
                 <th>Lots</th><th>Capital used</th><th>P&L ₹</th><th>Outcome</th><th>Equity</th></tr></thead>
               <tbody>
@@ -217,7 +217,8 @@ export default function Scalp() {
                   <tr key={i} style={t.lots === 0 ? { opacity: 0.55 } : undefined}>
                     <td className="mono">{t.day}</td><td className="mono">{t.time}</td>
                     <td className="mono">{t.exit_t ? t.exit_t.slice(11, 16) : "—"}</td>
-                    <td><b>{t.rule}</b></td><td>{t.direction}</td>
+                    <td><b>{t.rule}</b></td>
+                    <td><b>{t.instrument || t.direction}</b><div className="muted" style={{ fontSize: 11 }}>spot {t.spot}</div></td>
                     <td className="mono">₹{t.entry}</td>
                     <td className="mono" style={{ color: t.exit >= t.entry ? "var(--green)" : "var(--red)" }}>₹{t.exit}</td>
                     <td>{t.lots === 0 ? <span className="pill failed" style={{ fontSize: 10 }}>skip</span> : t.lots}</td>

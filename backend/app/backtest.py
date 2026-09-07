@@ -30,6 +30,13 @@ IST = ZoneInfo("Asia/Kolkata")
 ATM_PREMIUM_PCT = 0.28   # entry premium ≈ 0.28% of spot (near-expiry ATM weekly)
 ASSUMED_DELTA = 0.50     # scalp strikes are picked at |Δ|≈0.5 live
 _YF = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK", "FINNIFTY": "NIFTY_FIN_SERVICE.NS"}
+_STRIKE_STEP = {"NIFTY": 50, "BANKNIFTY": 100, "FINNIFTY": 50}
+
+
+def atm_instrument(symbol: str, spot: float, direction: str) -> str:
+    """The ATM strike the model trades: nearest listed strike to spot at entry."""
+    step = _STRIKE_STEP.get(symbol, 50)
+    return f"{symbol} {round(spot / step) * step} {direction}"
 
 
 def fetch_history_sessions(symbol: str, days: int = 7) -> dict[str, list[dict]]:
@@ -196,6 +203,7 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
                 trades.append({
                     "day": day, "time": bars[i]["t"][11:16], "rule": hit["rule"],
                     "direction": hit["direction"], "spot": round(spot0, 1),
+                    "instrument": atm_instrument(symbol, spot0, hit["direction"]),
                     "entry": ep, "exit": exit_p, "lots": lots,
                     "outlay": round(ep * lot * lots, 2) if lots else 0.0,
                     "pnl": pnl, "equity": equity,
