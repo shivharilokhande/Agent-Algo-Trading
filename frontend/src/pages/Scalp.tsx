@@ -251,7 +251,7 @@ export default function Scalp() {
             <table style={{ marginTop: 8 }}>
               <thead><tr><th>Day</th><th>Entry time</th><th>Exit time</th><th>Rule</th><th>Buy</th>
                 <th>Entry ₹ (premium)</th><th>Exit ₹ (premium)</th>
-                <th>Lots</th><th>Capital used</th><th>P&L ₹</th><th>Outcome</th><th>Equity</th></tr></thead>
+                <th>Lots</th><th>Capital used</th><th>Charges ₹</th><th>P&L ₹ (net)</th><th>Outcome</th><th>Equity</th></tr></thead>
               <tbody>
                 {bt.trades.map((t: any, i: number) => (
                   <tr key={i} style={t.lots === 0 ? { opacity: 0.55 } : undefined}>
@@ -264,6 +264,9 @@ export default function Scalp() {
                     <td className="mono" style={{ color: t.exit >= t.entry ? "var(--green)" : "var(--red)" }}>₹{t.exit}</td>
                     <td>{t.lots === 0 ? <span className="pill failed" style={{ fontSize: 10 }}>skip</span> : t.lots}</td>
                     <td className="mono">{t.outlay ? "₹" + Number(t.outlay).toLocaleString("en-IN") : "—"}</td>
+                    <td className="mono" style={{ color: "var(--red)" }}
+                      title="Full round trip: 2× brokerage + STT (sell) + NSE txn + SEBI + stamp + GST + slippage both sides">
+                      {t.lots > 0 && t.cost != null ? "−" + Number(t.cost).toLocaleString("en-IN") : "—"}</td>
                     <td className="mono" style={{ color: t.pnl >= 0 ? "var(--green)" : "var(--red)" }}>
                       {t.lots > 0 ? (t.pnl > 0 ? "+" : "") + Number(t.pnl).toLocaleString("en-IN") : "—"}</td>
                     <td><span className={`pill ${t.outcome === "TP" ? "done" : t.outcome === "SL" ? "failed" : "interrupted"}`}>{t.outcome}</span>
@@ -271,7 +274,7 @@ export default function Scalp() {
                     <td className="mono">₹{Number(t.equity).toLocaleString("en-IN")}</td>
                   </tr>
                 ))}
-                {bt.trades.length === 0 && <tr><td colSpan={12} className="muted">No signals fired in these sessions — quiet tape.</td></tr>}
+                {bt.trades.length === 0 && <tr><td colSpan={13} className="muted">No signals fired in these sessions — quiet tape.</td></tr>}
               </tbody>
             </table>
             <p className="muted" style={{ marginBottom: 0, fontSize: 12 }}>{bt.assumptions.note} Premium model:
