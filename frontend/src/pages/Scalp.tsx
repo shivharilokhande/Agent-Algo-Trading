@@ -209,15 +209,17 @@ export default function Scalp() {
                 <div className="l">Full-target rate (TP {bt.summary.tp} / SL {bt.summary.sl} / time {bt.summary.time_exits})</div></div>
             </div>
             <table style={{ marginTop: 8 }}>
-              <thead><tr><th>Day</th><th>Time</th><th>Rule</th><th>Dir</th><th>Entry</th><th>Exit</th>
+              <thead><tr><th>Day</th><th>Entry time</th><th>Exit time</th><th>Rule</th><th>Dir</th>
+                <th>Entry ₹ (premium)</th><th>Exit ₹ (premium)</th>
                 <th>Lots</th><th>Capital used</th><th>P&L ₹</th><th>Outcome</th><th>Equity</th></tr></thead>
               <tbody>
                 {bt.trades.map((t: any, i: number) => (
                   <tr key={i} style={t.lots === 0 ? { opacity: 0.55 } : undefined}>
                     <td className="mono">{t.day}</td><td className="mono">{t.time}</td>
+                    <td className="mono">{t.exit_t ? t.exit_t.slice(11, 16) : "—"}</td>
                     <td><b>{t.rule}</b></td><td>{t.direction}</td>
                     <td className="mono">₹{t.entry}</td>
-                    <td className="mono">₹{t.exit}</td>
+                    <td className="mono" style={{ color: t.exit >= t.entry ? "var(--green)" : "var(--red)" }}>₹{t.exit}</td>
                     <td>{t.lots === 0 ? <span className="pill failed" style={{ fontSize: 10 }}>skip</span> : t.lots}</td>
                     <td className="mono">{t.outlay ? "₹" + Number(t.outlay).toLocaleString("en-IN") : "—"}</td>
                     <td className="mono" style={{ color: t.pnl >= 0 ? "var(--green)" : "var(--red)" }}>
@@ -227,7 +229,7 @@ export default function Scalp() {
                     <td className="mono">₹{Number(t.equity).toLocaleString("en-IN")}</td>
                   </tr>
                 ))}
-                {bt.trades.length === 0 && <tr><td colSpan={11} className="muted">No signals fired in these sessions — quiet tape.</td></tr>}
+                {bt.trades.length === 0 && <tr><td colSpan={12} className="muted">No signals fired in these sessions — quiet tape.</td></tr>}
               </tbody>
             </table>
             <p className="muted" style={{ marginBottom: 0, fontSize: 12 }}>{bt.assumptions.note} Premium model:
