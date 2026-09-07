@@ -1,7 +1,7 @@
 """Scalp backtester — replays history through the SAME rule code that fires live.
 
 Uses yfinance 1-minute bars (max ~7 trading days back). Trades are simulated in
-premium terms with an explicit model: entry premium = ATM_PREMIUM_PCT of spot,
+premium terms with an explicit model: entry premium = 0.4·S·σ·√T (time-scaled ATM),
 premium path = delta × spot move (theta over ≤20 min treated as negligible),
 brackets identical to live (SL −18%, target 1:1.5, 20-min time stop). Bar-touch
 detection uses highs/lows; when SL and TP are touched in the same bar the SL is
@@ -27,8 +27,22 @@ from .scalp import (
 log = logging.getLogger("agentalgo.backtest")
 IST = ZoneInfo("Asia/Kolkata")
 
-ATM_PREMIUM_PCT = 0.28   # entry premium ≈ 0.28% of spot (near-expiry ATM weekly)
+ASSUMED_IV = 13.0        # ATM implied volatility (%) for the premium model
 ASSUMED_DELTA = 0.50     # scalp strikes are picked at |Δ|≈0.5 live
+
+
+def model_premium(spot: float, day_iso: str, symbol: str) -> float:
+    """ATM premium via Brenner–Subrahmanyam: 0.4 · S · σ · √T to the nearest expiry.
+
+    Verified against reality: 02-Sep-2026 (6 days to the 08-Sep weekly), spot
+    23,842 → model ≈ ₹152 vs the actual 23850 CE ≈ ₹165. Expiry-eve premiums
+    land near 0.28% of spot, which the old flat model assumed for EVERY day —
+    badly underpricing early-week entries (user-caught bug)."""
+    from datetime import date, datetime
+
+    exp = datetime.strptime(assumed_expiry(symbol, day_iso), "%d-%b-%Y").date()
+    dte = max((exp - date.fromisoformat(day_iso)).days, 0.5)
+    return round(0.4 * spot * (ASSUMED_IV / 100) * (dte / 365) ** 0.5, 2)
 _YF = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK", "FINNIFTY": "NIFTY_FIN_SERVICE.NS"}
 _STRIKE_STEP = {"NIFTY": 50, "BANKNIFTY": 100, "FINNIFTY": 50}
 
@@ -78,10 +92,9 @@ def fetch_history_sessions(symbol: str, days: int = 7) -> dict[str, list[dict]]:
     return dict(sorted(sessions.items())[-days:])
 
 
-def _simulate_trade(bars: list[dict], i: int, direction: str) -> dict:
+def _simulate_trade(bars: list[dict], i: int, direction: str, p0: float) -> dict:
     """Simulate one trade entered at bar i's close. Returns outcome + R multiple."""
     spot0 = bars[i]["c"]
-    p0 = round(spot0 * ATM_PREMIUM_PCT / 100, 2)
     risk = round(p0 * SCALP_SL_PCT / 100, 2)
     sign = 1.0 if direction == "CE" else -1.0
     # premium touch levels translated to spot moves: Δp = delta × Δspot(signed)
@@ -105,7 +118,8 @@ def _simulate_trade(bars: list[dict], i: int, direction: str) -> dict:
 HARD_CAP_MIN = 45  # trailing policies: absolute max holding time
 
 
-def _simulate_policy(bars: list[dict], i: int, direction: str, policy: str) -> dict:
+def _simulate_policy(bars: list[dict], i: int, direction: str, policy: str,
+                     p0: float | None = None) -> dict:
     """Simulate one trade under an exit policy. R units; conservative ordering.
 
     A fixed  : SL −1R / TP +1.5R / exit at 20 min (the live behavior today)
@@ -114,7 +128,8 @@ def _simulate_policy(bars: list[dict], i: int, direction: str, policy: str) -> d
     C hybrid : B, plus 'loser time-out' — if +0.5R never reached by 20 min, exit
     """
     spot0 = bars[i]["c"]
-    p0 = spot0 * ATM_PREMIUM_PCT / 100
+    if p0 is None:
+        p0 = 0.4 * spot0 * (ASSUMED_IV / 100) * (3 / 365) ** 0.5  # generic mid-week
     risk = p0 * SCALP_SL_PCT / 100
     sign = 1.0 if direction == "CE" else -1.0
     to_r = lambda px: sign * (px - spot0) * ASSUMED_DELTA / risk  # noqa: E731
@@ -164,7 +179,8 @@ def compare_exit_policies(symbol: str, days: int = 7) -> dict:
     out: dict = {"symbol": symbol, "sessions": list(sessions.keys()),
                  "n_signals": len(signals), "policies": {}}
     for name, p in policies.items():
-        rs = [_simulate_policy(bars, i, d, p) for bars, i, d, _, _ in signals]
+        rs = [_simulate_policy(bars, i, d, p, model_premium(bars[i]["c"], day, symbol))
+              for bars, i, d, _, day in signals]
         total = round(sum(x["r"] for x in rs), 2)
         winners = [x["r"] for x in rs if x["r"] > 0.05]
         losers = [x["r"] for x in rs if x["r"] < -0.05]
@@ -207,9 +223,9 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
                 if i - last_fire.get(hit["rule"], -10_000) < COOLDOWN_MIN:
                     continue
                 last_fire[hit["rule"]] = i
-                sim = _simulate_trade(bars, i, hit["direction"])
                 spot0 = bars[i]["c"]
-                ep = round(spot0 * ATM_PREMIUM_PCT / 100, 2)
+                ep = model_premium(spot0, day, symbol)
+                sim = _simulate_trade(bars, i, hit["direction"], ep)
                 risk = round(ep * SCALP_SL_PCT / 100, 2)
                 exit_p = round(ep + sim["r"] * risk, 2)
                 sizing = size_position(ep, round(ep - risk, 2), lot, equity, risk_pct)
@@ -244,7 +260,8 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
         "symbol": symbol,
         "sessions": list(sessions.keys()),
         "assumptions": {
-            "entry_premium_pct_of_spot": ATM_PREMIUM_PCT, "delta": ASSUMED_DELTA,
+            "premium_model": f"0.4·S·σ·√T (σ={ASSUMED_IV}% IV, T to nearest expiry)",
+            "delta": ASSUMED_DELTA,
             "sl_pct": SCALP_SL_PCT, "rr": SCALP_RR, "time_stop_min": SCALP_TIME_STOP_MIN,
             "note": ("Premium P&L modeled (Δ×spot move); WALL_REJECT excluded — no "
                      "historical OI. Same-bar SL+TP counted as SL. No bias filter in "

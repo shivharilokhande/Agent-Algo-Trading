@@ -235,7 +235,7 @@ export default function Scalp() {
               </tbody>
             </table>
             <p className="muted" style={{ marginBottom: 0, fontSize: 12 }}>{bt.assumptions.note} Premium model:
-              entry ≈ {bt.assumptions.entry_premium_pct_of_spot}% of spot at Δ {bt.assumptions.delta},
+              {" "}{bt.assumptions.premium_model} at Δ {bt.assumptions.delta},
               SL −{bt.assumptions.sl_pct}%, target 1:{bt.assumptions.rr}, time stop {bt.assumptions.time_stop_min}m.</p>
           </>
         )}

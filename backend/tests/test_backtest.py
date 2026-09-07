@@ -12,43 +12,57 @@ def _bars(closes, start=(9, 15)):
 
 
 def test_simulate_tp_and_sl():
-    from app.backtest import ASSUMED_DELTA, ATM_PREMIUM_PCT, _simulate_trade
+    from app.backtest import ASSUMED_DELTA, _simulate_trade
     from app.scalp import SCALP_RR, SCALP_SL_PCT
 
-    spot0 = 24000.0
-    p0 = spot0 * ATM_PREMIUM_PCT / 100          # 67.2
+    spot0, p0 = 24000.0, 67.2
     risk = p0 * SCALP_SL_PCT / 100              # 12.096
     tp_move = risk * SCALP_RR / ASSUMED_DELTA   # ≈36.3 spot points
     sl_move = risk / ASSUMED_DELTA              # ≈24.2 spot points
     # CE trade that rallies straight to TP
     closes = [spot0] + [spot0 + 10 * k for k in range(1, 8)]
-    sim = _simulate_trade(_bars(closes), 0, "CE")
+    sim = _simulate_trade(_bars(closes), 0, "CE", p0)
     assert sim["outcome"] == "TP" and sim["r"] == SCALP_RR
     # CE trade that dumps to SL
     closes = [spot0] + [spot0 - 10 * k for k in range(1, 8)]
-    sim = _simulate_trade(_bars(closes), 0, "CE")
+    sim = _simulate_trade(_bars(closes), 0, "CE", p0)
     assert sim["outcome"] == "SL" and sim["r"] == -1.0
     # PE mirror: dump = win
-    sim = _simulate_trade(_bars(closes), 0, "PE")
+    sim = _simulate_trade(_bars(closes), 0, "PE", p0)
     assert sim["outcome"] == "TP"
     # flat tape → time stop with small |r|
     closes = [spot0] * 25
-    sim = _simulate_trade(_bars(closes), 0, "CE")
+    sim = _simulate_trade(_bars(closes), 0, "CE", p0)
     assert sim["outcome"] == "TIME" and abs(sim["r"]) < 0.2
     # both levels inside one wild bar → conservative SL
     bars = _bars([spot0, spot0])
     bars[1]["h"] = spot0 + tp_move + 5
     bars[1]["l"] = spot0 - sl_move - 5
-    sim = _simulate_trade(bars, 0, "CE")
+    sim = _simulate_trade(bars, 0, "CE", p0)
     assert sim["outcome"] == "SL"
 
 
+def test_model_premium_time_scaling():
+    """User-caught bug: 02-Sep (6 days to 08-Sep expiry) real 23850 CE ≈ ₹165,
+    old flat model said ₹67. Time-scaled model must land in a sane band."""
+    from app.backtest import model_premium
+
+    early_week = model_premium(23842.2, "2026-09-02", "NIFTY")   # 6 DTE
+    expiry_eve = model_premium(23842.2, "2026-09-07", "NIFTY")   # 1 DTE
+    assert 120 <= early_week <= 200      # real was ~165
+    assert 45 <= expiry_eve <= 90        # ~0.28% of spot zone
+    assert early_week > expiry_eve * 2   # √6 ≈ 2.45× more time value
+
+
 def test_exit_policy_comparison():
-    from app.backtest import ASSUMED_DELTA, ATM_PREMIUM_PCT, _simulate_policy
+    from app.backtest import ASSUMED_DELTA, _simulate_policy as _sp
     from app.scalp import SCALP_RR, SCALP_SL_PCT
 
+    def _simulate_policy(bars, i, d, p):  # pin the premium so thresholds are known
+        return _sp(bars, i, d, p, 67.2)
+
     spot0 = 24000.0
-    risk_spot = (spot0 * ATM_PREMIUM_PCT / 100) * (SCALP_SL_PCT / 100) / ASSUMED_DELTA
+    risk_spot = 67.2 * (SCALP_SL_PCT / 100) / ASSUMED_DELTA
     # big runner: climbs steadily for 40 bars — trail should beat the fixed 1.5R cap
     runner = [spot0 + risk_spot * 0.15 * k for k in range(45)]
     a = _simulate_policy(_bars(runner), 0, "CE", "A")
