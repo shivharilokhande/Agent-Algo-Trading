@@ -65,6 +65,17 @@ export default function Scalp() {
 
   const symbols: string[] = cfg.scalp_symbols || ["NIFTY"];
 
+  const [bt, setBt] = useState<any>(null);
+  const [btBusy, setBtBusy] = useState(false);
+  const [btSym, setBtSym] = useState("NIFTY");
+
+  async function runBacktest() {
+    setBtBusy(true); setErr(""); setBt(null);
+    try {
+      setBt(await api.post(`/api/scalp/backtest?symbol=${btSym}&days=7`));
+    } catch (ex: any) { setErr(ex.message); } finally { setBtBusy(false); }
+  }
+
   return (
     <div>
       <h1>Scalp Mode</h1>
@@ -163,6 +174,52 @@ export default function Scalp() {
           read, honour the stop and the time stop. Signals also arrive as Mac notifications.
           Research, not advice.
         </p>
+      </div>
+
+      <div className="card">
+        <h3>Backtest <span className="muted">— replay the last 7 sessions through the live rule code</span></h3>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <select value={btSym} onChange={(e) => setBtSym(e.target.value)}>
+            {ALL_SYMBOLS.map((s) => <option key={s}>{s}</option>)}
+          </select>
+          <button className="small" disabled={btBusy} onClick={runBacktest}>
+            {btBusy ? "Replaying…" : "Run backtest"}
+          </button>
+          {bt && <span className="muted">{bt.sessions.length} sessions: {bt.sessions[0]} → {bt.sessions[bt.sessions.length - 1]}</span>}
+        </div>
+        {bt && (
+          <>
+            <div className="grid4" style={{ marginTop: 12 }}>
+              <div className="stat"><div className="v">{bt.summary.n}</div><div className="l">Signals</div></div>
+              <div className="stat"><div className="v" style={{ color: (bt.summary.win_rate ?? 0) >= 0.4 ? "var(--green)" : "var(--red)" }}>
+                {bt.summary.win_rate === null ? "—" : (bt.summary.win_rate * 100).toFixed(0) + "%"}</div>
+                <div className="l">Win rate (TP {bt.summary.tp} / SL {bt.summary.sl} / time {bt.summary.time_exits})</div></div>
+              <div className="stat"><div className="v" style={{ color: bt.summary.total_r >= 0 ? "var(--green)" : "var(--red)" }}>
+                {bt.summary.total_r}R</div><div className="l">Net result</div></div>
+              <div className="stat"><div className="v">{bt.summary.expectancy_r ?? "—"}R</div><div className="l">Expectancy / trade</div></div>
+            </div>
+            <table style={{ marginTop: 8 }}>
+              <thead><tr><th>Day</th><th>Time</th><th>Rule</th><th>Dir</th><th>Spot</th>
+                <th>Outcome</th><th>R</th><th>Held</th></tr></thead>
+              <tbody>
+                {bt.trades.map((t: any, i: number) => (
+                  <tr key={i}>
+                    <td className="mono">{t.day}</td><td className="mono">{t.time}</td>
+                    <td><b>{t.rule}</b></td><td>{t.direction}</td>
+                    <td className="mono">{t.spot}</td>
+                    <td><span className={`pill ${t.outcome === "TP" ? "done" : t.outcome === "SL" ? "failed" : "interrupted"}`}>{t.outcome}</span></td>
+                    <td className="mono" style={{ color: t.r >= 0 ? "var(--green)" : "var(--red)" }}>{t.r > 0 ? "+" : ""}{t.r}</td>
+                    <td className="muted">{t.bars_held}m</td>
+                  </tr>
+                ))}
+                {bt.trades.length === 0 && <tr><td colSpan={8} className="muted">No signals fired in these sessions — quiet tape.</td></tr>}
+              </tbody>
+            </table>
+            <p className="muted" style={{ marginBottom: 0, fontSize: 12 }}>{bt.assumptions.note} Premium model:
+              entry ≈ {bt.assumptions.entry_premium_pct_of_spot}% of spot at Δ {bt.assumptions.delta},
+              SL −{bt.assumptions.sl_pct}%, target 1:{bt.assumptions.rr}, time stop {bt.assumptions.time_stop_min}m.</p>
+          </>
+        )}
       </div>
     </div>
   );

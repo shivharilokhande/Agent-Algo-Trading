@@ -187,6 +187,27 @@ def scalp_signals(
             for r in rows]
 
 
+@router.post("/scalp/backtest")
+async def scalp_backtest(
+    user: Annotated[User, Depends(get_current_user)],
+    symbol: str = "NIFTY",
+    days: int = 7,
+):
+    """Replay the last ≤7 sessions through the live rule code (modeled premiums)."""
+    import asyncio
+
+    from ..backtest import backtest_symbol
+
+    symbol = symbol.upper()
+    if symbol not in ("NIFTY", "BANKNIFTY", "FINNIFTY"):
+        raise HTTPException(status_code=422, detail="symbol must be NIFTY/BANKNIFTY/FINNIFTY")
+    days = max(1, min(days, 7))
+    try:
+        return await asyncio.to_thread(backtest_symbol, symbol, days)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"History unavailable: {exc}") from exc
+
+
 @router.delete("/scalp/signals/simulated", status_code=204)
 def clear_simulated_signals(
     user: Annotated[User, Depends(get_current_user)],

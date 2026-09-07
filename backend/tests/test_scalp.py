@@ -30,18 +30,27 @@ def test_indicators():
 def test_orb_and_vwap_rules():
     from app.scalp import evaluate_rules
 
-    # rising trend with pullbacks (RSI < 75) → ORB CE breakout
-    up, px = [], 24000.0
-    for i in range(36):
-        px += -3 if i % 3 == 2 else 4  # +4, +4, −3 …
-        up.append(px)
+    def trend(start, step_main, step_pull, n):
+        out, px = [], start
+        for i in range(n):
+            px += step_pull if i % 3 == 2 else step_main
+            out.append(px)
+        return out
+
+    # FRESH breakout: consolidate inside the range, then break out in the last bars
+    up = [24000.0 + (1 if i % 2 else -1) for i in range(15)]          # opening range ≈ 24003
+    up += trend(24000, 2, -1, 15)[:12]                                # drift up under OR high
+    up += [24001, 24002, 24004.5, 24008, 24012]                       # cross happens HERE
     hits = evaluate_rules(_bars(up))
     assert any(h["rule"] == "ORB" and h["direction"] == "CE" for h in hits)
-    # falling trend with bounces (RSI > 25) → ORB PE
-    dn, px = [], 24000.0
-    for i in range(36):
-        px += 3 if i % 3 == 2 else -4
-        dn.append(px)
+    # STALE breakout (broke long ago, still trending) must NOT re-fire
+    stale = trend(24000, 4, -3, 40)
+    hits = evaluate_rules(_bars(stale))
+    assert not any(h["rule"] == "ORB" for h in hits)
+    # fresh breakdown → ORB PE
+    dn = [24000.0 + (1 if i % 2 else -1) for i in range(15)]
+    dn += trend(24000, -2, 1, 15)[:12]
+    dn += [23999, 23998, 23995.5, 23992, 23988]
     hits = evaluate_rules(_bars(dn))
     assert any(h["rule"] == "ORB" and h["direction"] == "PE" for h in hits)
     # flat chop inside range → nothing

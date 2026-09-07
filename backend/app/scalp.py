@@ -116,11 +116,17 @@ def evaluate_rules(bars: list[dict], oi_walls: dict | None = None) -> list[dict]
     trend_up = e9 > e20 and spot > vw
     trend_dn = e9 < e20 and spot < vw
 
-    # ORB — breakout of the opening range with alignment
-    if spot > or_high and trend_up and r < 75:
+    # ORB — FRESH breakout of the opening range with alignment. "Fresh" = one of
+    # the last 3 closes was still inside the range; without this the condition
+    # stays true all day in a trend and re-fires stale mid-trend entries every
+    # cooldown (backtest: dominant loss source).
+    prev3_orb = closes[-4:-1]
+    if (spot > or_high and any(c <= or_high for c in prev3_orb)
+            and trend_up and r < 75):
         out.append({"rule": "ORB", "direction": "CE",
                     "why": f"spot {spot:.1f} broke OR high {or_high:.1f}; EMA9>EMA20, above VWAP {vw:.1f}, RSI {r}"})
-    elif spot < or_low and trend_dn and r > 25:
+    elif (spot < or_low and any(c >= or_low for c in prev3_orb)
+            and trend_dn and r > 25):
         out.append({"rule": "ORB", "direction": "PE",
                     "why": f"spot {spot:.1f} broke OR low {or_low:.1f}; EMA9<EMA20, below VWAP {vw:.1f}, RSI {r}"})
 
