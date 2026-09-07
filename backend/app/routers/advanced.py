@@ -281,6 +281,7 @@ async def scalp_backtest(
     risk_pct: float = 1.0,
     brokerage: float = 50.0,
     slippage_pct: float = 0.25,
+    exit_policy: str = "A",
 ):
     """Replay the last ≤7 sessions through the live rule code (modeled premiums)."""
     import asyncio
@@ -296,14 +297,17 @@ async def scalp_backtest(
     risk_pct = max(0.1, min(risk_pct, 10.0))
     brokerage = max(0.0, min(brokerage, 500.0))
     slippage_pct = max(0.0, min(slippage_pct, 2.0))
+    if exit_policy not in ("A", "G"):
+        raise HTTPException(status_code=422, detail="exit_policy must be A or G")
     try:
         if symbol == "COMBINED":
             from ..backtest import backtest_combined
 
             return await asyncio.to_thread(backtest_combined, days, capital, risk_pct,
-                                           brokerage, slippage_pct)
+                                           brokerage, slippage_pct,
+                                           ("NIFTY", "BANKNIFTY"), exit_policy)
         return await asyncio.to_thread(backtest_symbol, symbol, days, capital, risk_pct,
-                                       brokerage, slippage_pct)
+                                       brokerage, slippage_pct, exit_policy)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"History unavailable: {exc}") from exc
 

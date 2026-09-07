@@ -83,6 +83,7 @@ export default function Scalp() {
   const [btRisk, setBtRisk] = useState(1.0);
   const [btBrokerage, setBtBrokerage] = useState(20);
   const [btSlip, setBtSlip] = useState(0.25);
+  const [btExit, setBtExit] = useState("A");
 
   const btInputsOk = Number.isFinite(btCapital) && btCapital >= 10000
     && Number.isFinite(btRisk) && btRisk >= 0.1 && btRisk <= 10;
@@ -92,7 +93,7 @@ export default function Scalp() {
     try {
       setBt(await api.post(
         `/api/scalp/backtest?symbol=${btSym}&days=${btDays}&capital=${btCapital}` +
-        `&risk_pct=${btRisk}&brokerage=${btBrokerage}&slippage_pct=${btSlip}`));
+        `&risk_pct=${btRisk}&brokerage=${btBrokerage}&slippage_pct=${btSlip}&exit_policy=${btExit}`));
     } catch (ex: any) { setErr(ex.message); } finally { setBtBusy(false); }
   }
 
@@ -242,6 +243,12 @@ export default function Scalp() {
             value={btBrokerage} onChange={(e) => setBtBrokerage(Number(e.target.value))} /></label>
           <label>Slip %/side <input type="number" step="0.05" min="0" max="2" style={{ width: 60 }}
             value={btSlip} onChange={(e) => setBtSlip(Number(e.target.value))} /></label>
+          <label title="A: bank the full 1.5R target when touched. G: on TP touch ride with a trail (floor +1.2R, exit 0.3R below peak, 45m cap)">
+            Exit <select value={btExit} onChange={(e) => setBtExit(e.target.value)}>
+              <option value="A">A — bank at TP</option>
+              <option value="G">G — ride after TP</option>
+            </select>
+          </label>
           <button className="small" disabled={btBusy || !btInputsOk} onClick={runBacktest}
             title={btInputsOk ? "" : "Capital ≥ ₹10,000 and risk 0.1–10%"}>
             {btBusy ? "Replaying…" : "Run backtest"}
@@ -284,7 +291,7 @@ export default function Scalp() {
                       {t.lots > 0 && t.cost != null ? "−" + Number(t.cost).toLocaleString("en-IN") : "—"}</td>
                     <td className="mono" style={{ color: t.pnl >= 0 ? "var(--green)" : "var(--red)" }}>
                       {t.lots > 0 ? (t.pnl > 0 ? "+" : "") + Number(t.pnl).toLocaleString("en-IN") : "—"}</td>
-                    <td><span className={`pill ${t.outcome === "TP" ? "done" : t.outcome === "SL" ? "failed" : "interrupted"}`}>{t.outcome}</span>
+                    <td><span className={`pill ${["TP", "RUN"].includes(t.outcome) ? "done" : t.outcome === "SL" ? "failed" : "interrupted"}`}>{t.outcome}</span>
                       <span className="muted" style={{ fontSize: 11 }}> {t.r > 0 ? "+" : ""}{t.r}R · {t.bars_held}m</span></td>
                     <td className="mono">₹{Number(t.equity).toLocaleString("en-IN")}</td>
                   </tr>

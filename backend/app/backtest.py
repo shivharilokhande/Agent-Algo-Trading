@@ -214,48 +214,49 @@ def _simulate_policy(bars: list[dict], i: int, direction: str, policy: str,
                 floor = max(1.2, peak - 0.3)
                 if close_r <= floor:
                     return {"outcome": "RUN", "r": round(max(close_r, 1.2), 2),
-                            "bars_held": j - i}
+                            "exit_t": bars[j]["t"], "bars_held": j - i}
                 continue
             if adv <= -1.0:
-                return {"outcome": "SL", "r": -1.0, "bars_held": j - i}
+                return {"outcome": "SL", "r": -1.0, "exit_t": bars[j]["t"], "bars_held": j - i}
             if fav >= SCALP_RR:
                 tp_riding, peak = True, fav  # don't bank — ride the winner
                 continue
             if j - i >= SCALP_TIME_STOP_MIN:
-                return {"outcome": "TIME", "r": round(close_r, 2), "bars_held": j - i}
+                return {"outcome": "TIME", "r": round(close_r, 2), "exit_t": bars[j]["t"], "bars_held": j - i}
             continue
         if policy in ("A", "E", "F"):
             if adv <= -1.0:
-                return {"outcome": "SL", "r": -1.0, "bars_held": j - i}
+                return {"outcome": "SL", "r": -1.0, "exit_t": bars[j]["t"], "bars_held": j - i}
             if fav >= SCALP_RR:
-                return {"outcome": "TP", "r": SCALP_RR, "bars_held": j - i}
+                return {"outcome": "TP", "r": SCALP_RR, "exit_t": bars[j]["t"], "bars_held": j - i}
             if policy in ("E", "F"):
                 if j - i == SCALP_TIME_STOP_MIN:
                     if close_r >= 0.5:
                         extended = True  # earned 10 extra minutes chasing TP
                         peak = max(peak, close_r)
                     else:
-                        return {"outcome": "TIME", "r": round(close_r, 2), "bars_held": j - i}
+                        return {"outcome": "TIME", "r": round(close_r, 2), "exit_t": bars[j]["t"], "bars_held": j - i}
                 elif extended:
                     peak = max(peak, close_r)
                     # E: static +0.5R floor; F: floor ratchets up with the peak
                     floor = 0.5 if policy == "E" else max(0.5, peak - 0.25)
                     if close_r < floor:
-                        return {"outcome": "FLOOR", "r": round(close_r, 2), "bars_held": j - i}
+                        return {"outcome": "FLOOR", "r": round(close_r, 2), "exit_t": bars[j]["t"], "bars_held": j - i}
             continue
         # B / C — stops first (conservative), using state from BEFORE this bar
         if not be_armed and adv <= -1.0:
-            return {"outcome": "SL", "r": -1.0, "bars_held": j - i}
+            return {"outcome": "SL", "r": -1.0, "exit_t": bars[j]["t"], "bars_held": j - i}
         if be_armed and adv <= 0.0:
-            return {"outcome": "BE", "r": 0.0, "bars_held": j - i}
+            return {"outcome": "BE", "r": 0.0, "exit_t": bars[j]["t"], "bars_held": j - i}
         if be_armed and close_r <= peak - 0.5:
-            return {"outcome": "TRAIL", "r": round(close_r, 2), "bars_held": j - i}
+            return {"outcome": "TRAIL", "r": round(close_r, 2), "exit_t": bars[j]["t"], "bars_held": j - i}
         peak = max(peak, fav)
         if peak >= 0.5:
             be_armed = True
         if policy == "C" and j - i >= SCALP_TIME_STOP_MIN and not be_armed:
-            return {"outcome": "TIME", "r": round(close_r, 2), "bars_held": j - i}
-    return {"outcome": "TIME", "r": round(to_r(bars[end]["c"]), 2), "bars_held": end - i}
+            return {"outcome": "TIME", "r": round(close_r, 2), "exit_t": bars[j]["t"], "bars_held": j - i}
+    return {"outcome": "TIME", "r": round(to_r(bars[end]["c"]), 2),
+            "exit_t": bars[end]["t"], "bars_held": end - i}
 
 
 MAX_CONCURRENT = 2  # combined portfolio: at most this many open positions
@@ -265,7 +266,8 @@ def backtest_combined(days: int = 7, capital: float = 100_000.0,
                       risk_pct: float = 1.0,
                       brokerage: float = DEFAULT_BROKERAGE,
                       slip_pct: float = DEFAULT_SLIP_PCT,
-                      symbols: tuple[str, ...] = ("NIFTY", "BANKNIFTY")) -> dict:
+                      symbols: tuple[str, ...] = ("NIFTY", "BANKNIFTY"),
+                      exit_policy: str = "A") -> dict:
     """ONE account trading all `symbols` chronologically — the realistic setup.
 
     Signals from every index are merged in time order; open positions reserve
@@ -293,7 +295,9 @@ def backtest_combined(days: int = 7, capital: float = 100_000.0,
                     last[hit["rule"]] = m
                     spot0 = bars[i]["c"]
                     ep = model_premium(spot0, day, sym, vix.get(day))
-                    sim = _simulate_trade(bars, i, hit["direction"], ep)
+                    sim = (_simulate_trade(bars, i, hit["direction"], ep)
+                           if exit_policy == "A"
+                           else _simulate_policy(bars, i, hit["direction"], "G", ep))
                     cands.append({
                         "day": day, "em": m, "xm": m + sim["bars_held"], "sym": sym,
                         "time": bars[i]["t"][11:16], "rule": hit["rule"],
@@ -428,7 +432,8 @@ def compare_exit_policies(symbol: str, days: int = 7) -> dict:
 
 def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
                     risk_pct: float = 1.0, brokerage: float = DEFAULT_BROKERAGE,
-                    slip_pct: float = DEFAULT_SLIP_PCT) -> dict:
+                    slip_pct: float = DEFAULT_SLIP_PCT,
+                    exit_policy: str = "A") -> dict:
     """Walk each session bar-by-bar through evaluate_rules; simulate every signal.
 
     Rupee simulation (R5-5, no look-ahead): P&L settles at the trade's EXIT bar,
@@ -482,7 +487,9 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
                 last_fire[hit["rule"]] = now_min
                 spot0 = bars[i]["c"]
                 ep = model_premium(spot0, day, symbol, vix.get(day))
-                sim = _simulate_trade(bars, i, hit["direction"], ep)
+                sim = (_simulate_trade(bars, i, hit["direction"], ep)
+                       if exit_policy == "A"
+                       else _simulate_policy(bars, i, hit["direction"], "G", ep))
                 risk = round(ep * SCALP_SL_PCT / 100, 2)
                 exit_p = round(ep + sim["r"] * risk, 2)
                 free_equity = max(equity - open_outlay, 0.0)
