@@ -30,6 +30,12 @@ IST = ZoneInfo("Asia/Kolkata")
 SCALP_SL_PCT = 18.0          # stop loss: −18% of entry premium
 SCALP_RR = 1.5               # target = entry + 1.5 × risk
 SCALP_TIME_STOP_MIN = 20     # exit if nothing happened in 20 minutes
+# Policy G (test option): on TP touch, ride with a trail instead of banking —
+# floor +1.2R, exit 0.3R below the peak, hard cap 45 min. 60d backtest: tie
+# with A (+13.89R vs +13.30R); better on trending BANKNIFTY, worse on chop.
+G_FLOOR_R = 1.2
+G_TRAIL_R = 0.3
+G_HARD_CAP_MIN = 45
 THETA_CUTOFF = (14, 30)      # no new long-premium signals after 14:30 IST
 OPENING_RANGE_MIN = 15       # ORB window: 09:15–09:30
 COOLDOWN_MIN = 30            # min gap between signals per (symbol, rule)
@@ -217,7 +223,7 @@ def build_scalp_signal(symbol: str, rule_hit: dict, snapshot: dict,
     sizing = size_position(ep, sl, lot, capital, scalp_risk)
     if sizing.get("lots"):
         sizing["profit_tp"] = round((tp - ep) * lot * sizing["lots"], 2)
-    return {
+    sig = {
         "symbol": symbol,
         "rule": rule_hit["rule"],
         "direction": direction,
@@ -230,6 +236,14 @@ def build_scalp_signal(symbol: str, rule_hit: dict, snapshot: dict,
         "why": rule_hit["why"],
         "sizing": sizing,
     }
+    if settings_cfg.get("scalp_exit_policy") == "G":
+        sig.update({
+            "exit_policy": "G",
+            "ride_floor": round(ep + G_FLOOR_R * risk, 2),   # lock at least +1.2R
+            "trail_gap": round(G_TRAIL_R * risk, 2),          # exit peak − this ₹
+            "hard_cap_min": G_HARD_CAP_MIN,
+        })
+    return sig
 
 
 # --- data: 1m session bars ------------------------------------------------------
@@ -325,17 +339,22 @@ def emit_signal(user_id: str, sig: dict, simulated: bool = False) -> str | None:
             simulated=simulated,
         )
         db.add(row)
+        g_note = (f" [G: at TP ride — floor ₹{sig['ride_floor']}, trail ₹{sig['trail_gap']} "
+                  f"off peak, cap {sig['hard_cap_min']}m]"
+                  if sig.get("exit_policy") == "G" else "")
         db.add(Alert(
             user_id=user_id, ticker=sig["symbol"], type="scalp",
             message=(("[SIM] " if simulated else "")
                      + f"SCALP {sig['rule']}: {sig['instrument']} @ ₹{sig['ep']} "
-                       f"SL ₹{sig['sl']} TP ₹{sig['tp']} ({sig['why']})"),
+                       f"SL ₹{sig['sl']} TP ₹{sig['tp']}{g_note} ({sig['why']})"),
         ))
         db.commit()
         rid = row.id
     if not simulated:
+        tail = (f" → ride: floor ₹{sig['ride_floor']}" if sig.get("exit_policy") == "G"
+                else "")
         _notify_mac(f"AgentAlgo scalp — {sig['instrument']}",
-                    f"{sig['rule']}: entry ₹{sig['ep']} SL ₹{sig['sl']} TP ₹{sig['tp']}")
+                    f"{sig['rule']}: entry ₹{sig['ep']} SL ₹{sig['sl']} TP ₹{sig['tp']}{tail}")
     return rid
 
 

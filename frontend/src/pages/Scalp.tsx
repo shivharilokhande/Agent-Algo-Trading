@@ -127,6 +127,14 @@ export default function Scalp() {
               </label>
             ))}
           </span>
+          <label title="A: bank the full target when touched (60d-proven). G: on TP touch keep riding — floor +1.2R, exit 0.3R below peak, 45m cap (test mode; tie in backtest, better on trending days)">
+            Exit{" "}
+            <select value={cfg?.scalp_exit_policy || "A"} disabled={ctlDisabled}
+              onChange={(e) => saveCfg({ scalp_exit_policy: e.target.value })}>
+              <option value="A">A — bank at TP</option>
+              <option value="G">G — ride after TP (test)</option>
+            </select>
+          </label>
           <label>
             Scalp risk %/trade{" "}
             <input type="number" step="0.1" min="0.1" max="5" style={{ width: 70 }}
@@ -180,7 +188,13 @@ export default function Scalp() {
                 <td><b>{s.instrument}</b>{s.delta != null && <div className="muted">Δ {Number(s.delta).toFixed(2)}</div>}</td>
                 <td className="mono">≈ {inr(s.ep)}</td>
                 <td className="mono" style={{ color: "var(--red)" }}>{inr(s.sl)}</td>
-                <td className="mono" style={{ color: "var(--green)" }}>{inr(s.tp)} <span className="muted">{s.rr ? `1:${s.rr}` : ""}</span></td>
+                <td className="mono" style={{ color: "var(--green)" }}>{inr(s.tp)} <span className="muted">{s.rr ? `1:${s.rr}` : ""}</span>
+                  {(s as any).exit_policy === "G" && (
+                    <div className="muted" style={{ fontSize: 10 }}>
+                      G: ride — floor {inr((s as any).ride_floor)} · trail {inr((s as any).trail_gap)} off peak · cap {(s as any).hard_cap_min}m
+                    </div>
+                  )}
+                </td>
                 <td style={{ fontSize: 12 }}>
                   {s.sizing?.lots
                     ? <><b>{s.sizing.lots} lot{s.sizing.lots > 1 ? "s" : ""}</b>

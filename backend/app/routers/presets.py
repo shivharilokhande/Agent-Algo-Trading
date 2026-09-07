@@ -44,6 +44,7 @@ _SETTING_VALIDATORS: dict[str, type | tuple] = {
     "scalp_enabled": bool,
     "scalp_symbols": list,
     "scalp_risk_pct": (int, float),
+    "scalp_exit_policy": str,  # "A" (bank at TP, default) | "G" (ride after TP)
 }
 
 
@@ -131,6 +132,9 @@ def put_settings(
             if not (lo <= float(value) <= hi):
                 raise HTTPException(status_code=422,
                                     detail=f"{key} must be between {lo} and {hi}")
+        if key == "scalp_exit_policy" and value is not None and value not in ("A", "G"):
+            raise HTTPException(status_code=422,
+                                detail="scalp_exit_policy must be 'A' (bank at TP) or 'G' (ride after TP)")
     row = db.get(Setting, user.id)
     if row is None:
         row = Setting(user_id=user.id)

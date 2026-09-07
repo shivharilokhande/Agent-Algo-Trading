@@ -133,6 +133,16 @@ def test_pick_strike_and_build_signal():
     # empty ladder → no signal
     assert build_scalp_signal("NIFTY", {"rule": "ORB", "direction": "CE", "why": ""},
                               {"spot": 1, "atm_ladder": []}, {}) is None
+    # policy G (test mode) attaches the ride plan; A (default) doesn't
+    sig_g = build_scalp_signal("NIFTY", {"rule": "ORB", "direction": "CE", "why": "t"},
+                               snap, {"trading_capital": 500_000, "scalp_exit_policy": "G"})
+    risk = round(90.0 * 0.18, 2)
+    assert sig_g["exit_policy"] == "G"
+    assert sig_g["ride_floor"] == round(90.0 + 1.2 * risk, 2)
+    assert sig_g["trail_gap"] == round(0.3 * risk, 2)
+    sig_a = build_scalp_signal("NIFTY", {"rule": "ORB", "direction": "CE", "why": "t"},
+                               snap, {"trading_capital": 500_000})
+    assert "exit_policy" not in sig_a
 
 
 def test_scalp_api_and_dedupe(client, auth):
