@@ -27,6 +27,15 @@ from .scalp import IST, _YF_SYMBOL  # shared: one tz + one symbol map (R5 dead-c
 
 ASSUMED_IV = 13.0        # fallback ATM IV (%) when India VIX is unavailable
 ASSUMED_DELTA = 0.50     # scalp strikes are picked at |Δ|≈0.5 live
+DEFAULT_BROKERAGE = 50.0  # ₹/round-trip: 2×₹20 orders + exchange/STT/GST rounding
+DEFAULT_SLIP_PCT = 0.25   # % of premium lost to the spread on EACH side
+
+
+def trade_cost(entry_p: float, exit_p: float, lot: int, lots: int,
+               brokerage: float, slip_pct: float) -> float:
+    """Round-trip cost: flat brokerage+charges plus slippage on both fills."""
+    turnover_units = lot * lots
+    return round(brokerage + slip_pct / 100 * (entry_p + exit_p) * turnover_units, 2)
 # index vol vs India VIX (VIX tracks NIFTY; bank/fin indices run hotter)
 _VIX_MULT = {"NIFTY": 1.0, "BANKNIFTY": 1.25, "FINNIFTY": 1.1}
 
@@ -366,17 +375,6 @@ def compare_exit_policies(symbol: str, days: int = 7) -> dict:
             "avg_hold_min": round(sum(x["bars_held"] for x in rs) / len(rs), 1) if rs else None,
         }
     return out
-
-
-DEFAULT_BROKERAGE = 50.0   # ₹/round-trip: 2×₹20 orders + exchange/STT/GST rounding
-DEFAULT_SLIP_PCT = 0.25    # % of premium lost to the spread on EACH side
-
-
-def trade_cost(entry_p: float, exit_p: float, lot: int, lots: int,
-               brokerage: float, slip_pct: float) -> float:
-    """Round-trip cost: flat brokerage+charges plus slippage on both fills."""
-    turnover_units = lot * lots
-    return round(brokerage + slip_pct / 100 * (entry_p + exit_p) * turnover_units, 2)
 
 
 def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
