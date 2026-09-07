@@ -83,13 +83,18 @@ def test_exit_policy_comparison():
     assert c2["outcome"] == "BE" and c2["r"] == 0.0
 
 
-def test_trade_cost_model():
+def test_trade_cost_model_zerodha_exact():
     from app.backtest import trade_cost
 
-    # 2 lots × 65 units, entry ₹50 exit ₹60, ₹50 flat + 0.25%/side
-    # slippage = 0.25% × (50+60) × 130 = ₹35.75 → total ₹85.75
-    assert trade_cost(50.0, 60.0, 65, 2, 50.0, 0.25) == 85.75
-    assert trade_cost(50.0, 60.0, 65, 2, 0.0, 0.0) == 0.0  # costs can be switched off
+    # the user's worked Zerodha example: 75 qty, buy ₹100 → sell ₹110, no slippage
+    # brokerage 40 + STT 12.375 + txn 5.596 + SEBI 0.016 + stamp 0.225 + GST 8.21 ≈ 66.4
+    c = trade_cost(100.0, 110.0, 75, 1, brokerage=20.0, slip_pct=0.0)
+    assert 66.0 <= c <= 67.0
+    # slippage adds 0.25%×(100+110)×75 = ₹39.375 on top
+    c2 = trade_cost(100.0, 110.0, 75, 1, brokerage=20.0, slip_pct=0.25)
+    assert abs((c2 - c) - 39.38) < 0.02
+    # zero brokerage + zero slip still pays statutory charges (never free)
+    assert trade_cost(100.0, 110.0, 75, 1, brokerage=0.0, slip_pct=0.0) > 15
 
 
 def test_backtest_combined_portfolio(monkeypatch, client, auth):

@@ -27,15 +27,39 @@ from .scalp import IST, _YF_SYMBOL  # shared: one tz + one symbol map (R5 dead-c
 
 ASSUMED_IV = 13.0        # fallback ATM IV (%) when India VIX is unavailable
 ASSUMED_DELTA = 0.50     # scalp strikes are picked at |Δ|≈0.5 live
-DEFAULT_BROKERAGE = 50.0  # ₹/round-trip: 2×₹20 orders + exchange/STT/GST rounding
+DEFAULT_BROKERAGE = 20.0  # ₹ per executed order (Zerodha F&O flat)
 DEFAULT_SLIP_PCT = 0.25   # % of premium lost to the spread on EACH side
+
+# Statutory rates (Zerodha schedule, Sep 2026): STT 0.15% on sell-side premium
+# (raised from 0.10% on 01-Apr-2026), NSE txn 0.03553% of premium turnover,
+# SEBI ₹10/crore, stamp 0.003% buy-side, GST 18% on brokerage+txn+SEBI.
+_STT_SELL = 0.0015
+_NSE_TXN = 0.0003553
+_SEBI_PER_RUPEE = 10 / 1e7
+_STAMP_BUY = 0.00003
+_GST = 0.18
 
 
 def trade_cost(entry_p: float, exit_p: float, lot: int, lots: int,
-               brokerage: float, slip_pct: float) -> float:
-    """Round-trip cost: flat brokerage+charges plus slippage on both fills."""
-    turnover_units = lot * lots
-    return round(brokerage + slip_pct / 100 * (entry_p + exit_p) * turnover_units, 2)
+               brokerage: float = DEFAULT_BROKERAGE,
+               slip_pct: float = DEFAULT_SLIP_PCT) -> float:
+    """Exact Zerodha option round-trip cost + slippage.
+
+    Verified against the worked example (75 qty, buy ₹100 → sell ₹110):
+    brokerage ₹40 + STT ₹12.38 + txn ₹5.60 + stamp ₹0.23 + SEBI ₹0.02
+    + GST ₹8.21 ≈ ₹66.4 (before slippage).
+    """
+    units = lot * lots
+    buy_turn = entry_p * units
+    sell_turn = max(exit_p, 0.05) * units
+    brok = 2 * brokerage
+    stt = _STT_SELL * sell_turn
+    txn = _NSE_TXN * (buy_turn + sell_turn)
+    sebi = _SEBI_PER_RUPEE * (buy_turn + sell_turn)
+    stamp = _STAMP_BUY * buy_turn
+    gst = _GST * (brok + txn + sebi)
+    slip = slip_pct / 100 * (entry_p + exit_p) * units
+    return round(brok + stt + txn + sebi + stamp + gst + slip, 2)
 # index vol vs India VIX (VIX tracks NIFTY; bank/fin indices run hotter)
 _VIX_MULT = {"NIFTY": 1.0, "BANKNIFTY": 1.25, "FINNIFTY": 1.1}
 
@@ -334,7 +358,8 @@ def backtest_combined(days: int = 7, capital: float = 100_000.0,
             "risk_pct": risk_pct, "lot_size": None,
             "skipped_unaffordable": skipped_size,
             "total_costs": round(sum(t.get("cost", 0) for t in trades), 2),
-            "cost_model": f"₹{brokerage}/trade + {slip_pct}%/side slippage",
+            "cost_model": (f"Zerodha exact: ₹{brokerage}/order + STT 0.15% sell + "
+                           f"txn 0.03553% + stamp + GST + {slip_pct}%/side slippage"),
         },
     }
 
@@ -499,6 +524,7 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
             "risk_pct": risk_pct, "lot_size": lot,
             "skipped_unaffordable": skipped,
             "total_costs": round(sum(t.get("cost", 0) for t in taken), 2),
-            "cost_model": f"₹{brokerage}/trade + {slip_pct}%/side slippage",
+            "cost_model": (f"Zerodha exact: ₹{brokerage}/order + STT 0.15% sell + "
+                           f"txn 0.03553% + stamp + GST + {slip_pct}%/side slippage"),
         },
     }

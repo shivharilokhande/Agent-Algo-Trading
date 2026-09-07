@@ -81,7 +81,7 @@ export default function Scalp() {
   const [btDays, setBtDays] = useState(7);
   const [btCapital, setBtCapital] = useState(100000);
   const [btRisk, setBtRisk] = useState(1.0);
-  const [btBrokerage, setBtBrokerage] = useState(50);
+  const [btBrokerage, setBtBrokerage] = useState(20);
   const [btSlip, setBtSlip] = useState(0.25);
 
   const btInputsOk = Number.isFinite(btCapital) && btCapital >= 10000
@@ -223,7 +223,8 @@ export default function Scalp() {
             value={btCapital} onChange={(e) => setBtCapital(Number(e.target.value))} /></label>
           <label>Risk %/trade <input type="number" step="0.1" min="0.1" max="10" style={{ width: 60 }}
             value={btRisk} onChange={(e) => setBtRisk(Number(e.target.value))} /></label>
-          <label>Cost ₹/trade <input type="number" step="10" min="0" max="500" style={{ width: 60 }}
+          <label title="Zerodha flat ₹20/order; STT/txn/GST/stamp computed exactly on top">
+            Brokerage ₹/order <input type="number" step="5" min="0" max="100" style={{ width: 55 }}
             value={btBrokerage} onChange={(e) => setBtBrokerage(Number(e.target.value))} /></label>
           <label>Slip %/side <input type="number" step="0.05" min="0" max="2" style={{ width: 60 }}
             value={btSlip} onChange={(e) => setBtSlip(Number(e.target.value))} /></label>
