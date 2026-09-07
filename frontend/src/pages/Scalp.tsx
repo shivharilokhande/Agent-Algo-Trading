@@ -209,6 +209,7 @@ export default function Scalp() {
         <h3>Backtest <span className="muted">— replay the last 7 sessions through the live rule code</span></h3>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <select value={btSym} onChange={(e) => setBtSym(e.target.value)}>
+            <option value="COMBINED">COMBINED (NIFTY+BANKNIFTY, one account)</option>
             {ALL_SYMBOLS.map((s) => <option key={s}>{s}</option>)}
           </select>
           <label>Days <select value={btDays} onChange={(e) => setBtDays(Number(e.target.value))}>

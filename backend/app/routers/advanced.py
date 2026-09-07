@@ -286,12 +286,17 @@ async def scalp_backtest(
     from ..backtest import backtest_symbol
 
     symbol = symbol.upper()
-    if symbol not in ("NIFTY", "BANKNIFTY", "FINNIFTY"):
-        raise HTTPException(status_code=422, detail="symbol must be NIFTY/BANKNIFTY/FINNIFTY")
+    if symbol not in ("NIFTY", "BANKNIFTY", "FINNIFTY", "COMBINED"):
+        raise HTTPException(status_code=422,
+                            detail="symbol must be NIFTY/BANKNIFTY/FINNIFTY/COMBINED")
     days = max(1, min(days, 60))  # >7 needs a live Kite session (historical add-on)
     capital = max(10_000.0, min(capital, 100_000_000.0))
     risk_pct = max(0.1, min(risk_pct, 10.0))
     try:
+        if symbol == "COMBINED":
+            from ..backtest import backtest_combined
+
+            return await asyncio.to_thread(backtest_combined, days, capital, risk_pct)
         return await asyncio.to_thread(backtest_symbol, symbol, days, capital, risk_pct)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"History unavailable: {exc}") from exc

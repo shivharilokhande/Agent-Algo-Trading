@@ -83,6 +83,36 @@ def test_exit_policy_comparison():
     assert c2["outcome"] == "BE" and c2["r"] == 0.0
 
 
+def test_backtest_combined_portfolio(monkeypatch, client, auth):
+    """One shared account: concurrency capped, outlay reserved, exit-settled."""
+    from app import backtest as bt
+
+    def trend_bars(start):
+        closes = [start + (1 if i % 2 else -1) for i in range(15)]
+        px = start
+        seg = []
+        for i in range(12):
+            px += -1 if i % 3 == 2 else 2
+            seg.append(px)
+        closes += seg + [start + 1, start + 2, start + 4.5, start + 8, start + 12,
+                         start + 16, start + 20, start + 24, start + 28, start + 32]
+        return _bars(closes)
+
+    sessions = {"NIFTY": {"2026-09-04": trend_bars(24000.0)},
+                "BANKNIFTY": {"2026-09-04": trend_bars(57000.0)}}
+    monkeypatch.setattr(bt, "fetch_history_sessions", lambda s, d=7: sessions[s])
+    monkeypatch.setattr(bt, "fetch_vix_map", lambda d=12: {})
+    out = bt.backtest_combined(7, capital=1_000_000, risk_pct=1.0)
+    s = out["summary"]
+    assert s["n_taken"] >= 1
+    assert s["n_taken"] + s["skipped_unaffordable"] <= s["n"]
+    assert s["capital_end"] == round(1_000_000 + sum(t["pnl"] for t in out["trades"]), 2)
+    assert "COMBINED" in out["symbol"]
+    # API surface accepts COMBINED
+    r = client.post("/api/scalp/backtest?symbol=COMBINED&days=7", headers=auth)
+    assert r.status_code in (200, 502)  # 502 only if market data is unreachable
+
+
 def test_backtest_symbol_walkforward(monkeypatch):
     from app import backtest as bt
 

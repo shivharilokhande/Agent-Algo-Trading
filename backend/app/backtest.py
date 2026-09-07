@@ -205,6 +205,126 @@ def _simulate_policy(bars: list[dict], i: int, direction: str, policy: str,
     return {"outcome": "TIME", "r": round(to_r(bars[end]["c"]), 2), "bars_held": end - i}
 
 
+MAX_CONCURRENT = 2  # combined portfolio: at most this many open positions
+
+
+def backtest_combined(days: int = 7, capital: float = 100_000.0,
+                      risk_pct: float = 1.0,
+                      symbols: tuple[str, ...] = ("NIFTY", "BANKNIFTY")) -> dict:
+    """ONE account trading all `symbols` chronologically — the realistic setup.
+
+    Signals from every index are merged in time order; open positions reserve
+    their premium outlay, at most MAX_CONCURRENT positions are held at once,
+    and P&L settles at each trade's exit bar (no look-ahead).
+    """
+    from .fno import DEFAULT_LOT_SIZES, size_position
+
+    # 1) collect candidates per symbol (same rules/cooldowns as the live engine)
+    cands: list[dict] = []
+    all_days: set[str] = set()
+    for sym in symbols:
+        sessions = fetch_history_sessions(sym, days)
+        vix = fetch_vix_map(days)
+        all_days |= set(sessions)
+        for day, bars in sessions.items():
+            last: dict[str, int] = {}
+            for i in range(OPENING_RANGE_MIN + 5, len(bars)):
+                if bars[i]["hm"] >= THETA_CUTOFF:
+                    break
+                for hit in evaluate_rules(bars[: i + 1]):
+                    m = bars[i]["hm"][0] * 60 + bars[i]["hm"][1]
+                    if m - last.get(hit["rule"], -10_000) < COOLDOWN_MIN:
+                        continue
+                    last[hit["rule"]] = m
+                    spot0 = bars[i]["c"]
+                    ep = model_premium(spot0, day, sym, vix.get(day))
+                    sim = _simulate_trade(bars, i, hit["direction"], ep)
+                    cands.append({
+                        "day": day, "em": m, "xm": m + sim["bars_held"], "sym": sym,
+                        "time": bars[i]["t"][11:16], "rule": hit["rule"],
+                        "direction": hit["direction"], "spot": round(spot0, 1),
+                        "instrument": atm_instrument(sym, spot0, hit["direction"]),
+                        "expiry": assumed_expiry(sym, day), "entry": ep,
+                        "risk": round(ep * SCALP_SL_PCT / 100, 2),
+                        "why": hit["why"], **sim,
+                    })
+    cands.sort(key=lambda c: (c["day"], c["em"]))
+
+    # 2) portfolio walk: settle at exit, reserve outlay, cap concurrency
+    trades: list[dict] = []
+    equity, peak, max_dd = capital, capital, 0.0
+    skipped_conc = skipped_size = 0
+    for day in sorted(all_days):
+        open_pos: list[dict] = []
+
+        def _settle(upto: int) -> None:
+            nonlocal equity, peak, max_dd
+            for p in sorted([p for p in open_pos if p["xm"] <= upto], key=lambda p: p["xm"]):
+                equity = round(equity + p["pnl"], 2)
+                peak = max(peak, equity)
+                max_dd = max(max_dd, peak - equity)
+                p["rec"]["equity"] = equity
+                open_pos.remove(p)
+
+        for c in [c for c in cands if c["day"] == day]:
+            _settle(c["em"])
+            if len(open_pos) >= MAX_CONCURRENT:
+                skipped_conc += 1
+                continue
+            lot = DEFAULT_LOT_SIZES.get(c["sym"])
+            reserved = sum(p["outlay"] for p in open_pos)
+            sizing = size_position(c["entry"], round(c["entry"] - c["risk"], 2), lot,
+                                   max(equity - reserved, 0), risk_pct)
+            lots = sizing.get("lots") or 0
+            if not lots:
+                skipped_size += 1
+                continue
+            pnl = round(c["r"] * c["risk"] * lot * lots, 2)
+            outlay = round(c["entry"] * lot * lots, 2)
+            rec = {k: c[k] for k in ("day", "time", "rule", "direction", "spot",
+                                     "instrument", "expiry", "why", "r", "outcome",
+                                     "bars_held", "exit_t")}
+            rec.update({"entry": c["entry"],
+                        "exit": round(c["entry"] + c["r"] * c["risk"], 2),
+                        "lots": lots, "outlay": outlay, "pnl": pnl, "equity": equity})
+            trades.append(rec)
+            open_pos.append({"xm": c["xm"], "pnl": pnl, "outlay": outlay, "rec": rec})
+        _settle(10**9)
+
+    wins = [t for t in trades if t["outcome"] == "TP"]
+    losses = [t for t in trades if t["outcome"] == "SL"]
+    total_r = round(sum(t["r"] for t in trades), 2)
+    return {
+        "symbol": "COMBINED (" + "+".join(symbols) + f", max {MAX_CONCURRENT} open)",
+        "sessions": sorted(all_days),
+        "assumptions": {
+            "premium_model": ("0.4·S·σ·√T — σ from each day's India VIX close"
+                              f" (fallback {ASSUMED_IV}%), T to nearest expiry"),
+            "delta": ASSUMED_DELTA, "sl_pct": SCALP_SL_PCT, "rr": SCALP_RR,
+            "time_stop_min": SCALP_TIME_STOP_MIN,
+            "note": (f"ONE shared account across {'+'.join(symbols)} — outlay reserved "
+                     f"while positions are open, max {MAX_CONCURRENT} concurrent; "
+                     f"{skipped_conc} signals skipped for concurrency, {skipped_size} "
+                     "unaffordable. Premium P&L modeled; WALL_REJECT excluded."),
+        },
+        "trades": trades,
+        "summary": {
+            "n": len(trades) + skipped_conc + skipped_size, "n_taken": len(trades),
+            "tp": len(wins), "sl": len(losses),
+            "time_exits": len(trades) - len(wins) - len(losses),
+            "win_rate": round(len(wins) / len(trades), 3) if trades else None,
+            "total_r": total_r,
+            "expectancy_r": round(total_r / len(trades), 3) if trades else None,
+            "capital_start": capital, "capital_end": equity,
+            "net_pnl": round(equity - capital, 2),
+            "return_pct": round((equity - capital) / capital * 100, 2) if capital else None,
+            "max_drawdown": round(max_dd, 2),
+            "risk_pct": risk_pct, "lot_size": None,
+            "skipped_unaffordable": skipped_size,
+        },
+    }
+
+
 def compare_exit_policies(symbol: str, days: int = 7) -> dict:
     """Same signals, three exit policies, side-by-side summaries."""
     sessions = fetch_history_sessions(symbol, days)
