@@ -115,6 +115,8 @@ def put_settings(
     scalp checkbox erasing trading_capital). Send a key with value null to
     delete that key.
     """
+    _RANGES = {"scalp_risk_pct": (0.1, 5.0), "risk_per_trade_pct": (0.1, 10.0),
+               "trading_capital": (10_000, 1_000_000_000)}
     for key, value in body.config.items():
         expected = _SETTING_VALIDATORS.get(key)
         if expected is None:
@@ -124,6 +126,11 @@ def put_settings(
                 status_code=422,
                 detail=f"Invalid value for {key}: expected {expected}, got {type(value).__name__}",
             )
+        if value is not None and key in _RANGES:
+            lo, hi = _RANGES[key]
+            if not (lo <= float(value) <= hi):
+                raise HTTPException(status_code=422,
+                                    detail=f"{key} must be between {lo} and {hi}")
     row = db.get(Setting, user.id)
     if row is None:
         row = Setting(user_id=user.id)

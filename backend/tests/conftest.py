@@ -5,6 +5,7 @@ import tempfile
 _tmp = tempfile.mkdtemp(prefix="agentalgo_test_")
 os.environ["AGENTALGO_DATA_DIR"] = _tmp
 os.environ["AGENTALGO_DATABASE_URL"] = f"sqlite:///{_tmp}/test.db"
+os.environ["AGENTALGO_DISABLE_NOTIFY"] = "1"  # tests must never pop Mac notifications
 
 import pytest
 from fastapi.testclient import TestClient

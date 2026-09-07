@@ -132,7 +132,11 @@ export default function Scalp() {
               placeholder="½ of swing" disabled={ctlDisabled}
               onBlur={(e) => {
                 const v = Number(e.target.value);
-                if (e.target.value && Number.isFinite(v) && v > 0) saveCfg({ scalp_risk_pct: v });
+                if (e.target.value && Number.isFinite(v) && v >= 0.1 && v <= 5) {
+                  saveCfg({ scalp_risk_pct: v });
+                } else if (e.target.value) {
+                  setErr("Scalp risk must be between 0.1% and 5% — a typo here sizes real lots.");
+                }
               }} />
           </label>
           {status && !status.market_open && (

@@ -211,6 +211,8 @@ def build_scalp_signal(symbol: str, rule_hit: dict, snapshot: dict,
     capital = float(settings_cfg.get("trading_capital") or DEFAULT_CAPITAL)
     swing_risk = float(settings_cfg.get("risk_per_trade_pct") or DEFAULT_RISK_PCT)
     scalp_risk = float(settings_cfg.get("scalp_risk_pct") or swing_risk * DEFAULT_SCALP_RISK_FRACTION)
+    # hard safety clamp: a typo like "50" must never size 50%-risk scalps
+    scalp_risk = max(0.1, min(scalp_risk, 5.0))
     lot = (settings_cfg.get("fno_lot_sizes") or {}).get(symbol) or DEFAULT_LOT_SIZES.get(symbol)
     sizing = size_position(ep, sl, lot, capital, scalp_risk)
     if sizing.get("lots"):
@@ -284,6 +286,10 @@ def day_bias(user_id: str, symbol: str, with_age: bool = False):
 
 def _notify_mac(title: str, message: str) -> None:
     """macOS desktop notification (best effort — backend runs on the user's Mac)."""
+    import os
+
+    if os.environ.get("AGENTALGO_DISABLE_NOTIFY"):
+        return  # tests emit 'real' signals into an isolated DB — never notify
     try:
         script = f'display notification "{message}" with title "{title}" sound name "Glass"'
         # R5: fire-and-forget — a blocking run(timeout=5) could stall the event loop
