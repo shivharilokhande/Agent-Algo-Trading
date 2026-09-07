@@ -279,6 +279,8 @@ async def scalp_backtest(
     days: int = 7,
     capital: float = 100_000.0,
     risk_pct: float = 1.0,
+    brokerage: float = 50.0,
+    slippage_pct: float = 0.25,
 ):
     """Replay the last ≤7 sessions through the live rule code (modeled premiums)."""
     import asyncio
@@ -292,12 +294,16 @@ async def scalp_backtest(
     days = max(1, min(days, 60))  # >7 needs a live Kite session (historical add-on)
     capital = max(10_000.0, min(capital, 100_000_000.0))
     risk_pct = max(0.1, min(risk_pct, 10.0))
+    brokerage = max(0.0, min(brokerage, 500.0))
+    slippage_pct = max(0.0, min(slippage_pct, 2.0))
     try:
         if symbol == "COMBINED":
             from ..backtest import backtest_combined
 
-            return await asyncio.to_thread(backtest_combined, days, capital, risk_pct)
-        return await asyncio.to_thread(backtest_symbol, symbol, days, capital, risk_pct)
+            return await asyncio.to_thread(backtest_combined, days, capital, risk_pct,
+                                           brokerage, slippage_pct)
+        return await asyncio.to_thread(backtest_symbol, symbol, days, capital, risk_pct,
+                                       brokerage, slippage_pct)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"History unavailable: {exc}") from exc
 

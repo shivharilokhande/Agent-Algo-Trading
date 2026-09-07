@@ -83,6 +83,15 @@ def test_exit_policy_comparison():
     assert c2["outcome"] == "BE" and c2["r"] == 0.0
 
 
+def test_trade_cost_model():
+    from app.backtest import trade_cost
+
+    # 2 lots × 65 units, entry ₹50 exit ₹60, ₹50 flat + 0.25%/side
+    # slippage = 0.25% × (50+60) × 130 = ₹35.75 → total ₹85.75
+    assert trade_cost(50.0, 60.0, 65, 2, 50.0, 0.25) == 85.75
+    assert trade_cost(50.0, 60.0, 65, 2, 0.0, 0.0) == 0.0  # costs can be switched off
+
+
 def test_backtest_combined_portfolio(monkeypatch, client, auth):
     """One shared account: concurrency capped, outlay reserved, exit-settled."""
     from app import backtest as bt

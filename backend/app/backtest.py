@@ -210,6 +210,8 @@ MAX_CONCURRENT = 2  # combined portfolio: at most this many open positions
 
 def backtest_combined(days: int = 7, capital: float = 100_000.0,
                       risk_pct: float = 1.0,
+                      brokerage: float = DEFAULT_BROKERAGE,
+                      slip_pct: float = DEFAULT_SLIP_PCT,
                       symbols: tuple[str, ...] = ("NIFTY", "BANKNIFTY")) -> dict:
     """ONE account trading all `symbols` chronologically — the realistic setup.
 
@@ -279,13 +281,14 @@ def backtest_combined(days: int = 7, capital: float = 100_000.0,
             if not lots:
                 skipped_size += 1
                 continue
-            pnl = round(c["r"] * c["risk"] * lot * lots, 2)
+            exit_p = round(c["entry"] + c["r"] * c["risk"], 2)
+            cost = trade_cost(c["entry"], exit_p, lot, lots, brokerage, slip_pct)
+            pnl = round(c["r"] * c["risk"] * lot * lots - cost, 2)
             outlay = round(c["entry"] * lot * lots, 2)
             rec = {k: c[k] for k in ("day", "time", "rule", "direction", "spot",
                                      "instrument", "expiry", "why", "r", "outcome",
                                      "bars_held", "exit_t")}
-            rec.update({"entry": c["entry"],
-                        "exit": round(c["entry"] + c["r"] * c["risk"], 2),
+            rec.update({"entry": c["entry"], "exit": exit_p, "cost": cost,
                         "lots": lots, "outlay": outlay, "pnl": pnl, "equity": equity})
             trades.append(rec)
             open_pos.append({"xm": c["xm"], "pnl": pnl, "outlay": outlay, "rec": rec})
@@ -321,6 +324,8 @@ def backtest_combined(days: int = 7, capital: float = 100_000.0,
             "max_drawdown": round(max_dd, 2),
             "risk_pct": risk_pct, "lot_size": None,
             "skipped_unaffordable": skipped_size,
+            "total_costs": round(sum(t.get("cost", 0) for t in trades), 2),
+            "cost_model": f"₹{brokerage}/trade + {slip_pct}%/side slippage",
         },
     }
 
@@ -363,8 +368,20 @@ def compare_exit_policies(symbol: str, days: int = 7) -> dict:
     return out
 
 
+DEFAULT_BROKERAGE = 50.0   # ₹/round-trip: 2×₹20 orders + exchange/STT/GST rounding
+DEFAULT_SLIP_PCT = 0.25    # % of premium lost to the spread on EACH side
+
+
+def trade_cost(entry_p: float, exit_p: float, lot: int, lots: int,
+               brokerage: float, slip_pct: float) -> float:
+    """Round-trip cost: flat brokerage+charges plus slippage on both fills."""
+    turnover_units = lot * lots
+    return round(brokerage + slip_pct / 100 * (entry_p + exit_p) * turnover_units, 2)
+
+
 def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
-                    risk_pct: float = 1.0) -> dict:
+                    risk_pct: float = 1.0, brokerage: float = DEFAULT_BROKERAGE,
+                    slip_pct: float = DEFAULT_SLIP_PCT) -> dict:
     """Walk each session bar-by-bar through evaluate_rules; simulate every signal.
 
     Rupee simulation (R5-5, no look-ahead): P&L settles at the trade's EXIT bar,
@@ -424,7 +441,8 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
                 free_equity = max(equity - open_outlay, 0.0)
                 sizing = size_position(ep, round(ep - risk, 2), lot, free_equity, risk_pct)
                 lots = sizing.get("lots") or 0
-                pnl = round(sim["r"] * risk * lot * lots, 2) if lots else 0.0
+                cost = trade_cost(ep, exit_p, lot, lots, brokerage, slip_pct) if lots else 0.0
+                pnl = round(sim["r"] * risk * lot * lots - cost, 2) if lots else 0.0
                 outlay = round(ep * lot * lots, 2) if lots else 0.0
                 rec = {
                     "day": day, "time": bars[i]["t"][11:16], "rule": hit["rule"],
@@ -432,7 +450,7 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
                     "instrument": atm_instrument(symbol, spot0, hit["direction"]),
                     "expiry": assumed_expiry(symbol, day),
                     "entry": ep, "exit": exit_p, "lots": lots,
-                    "outlay": outlay, "pnl": pnl, "equity": equity,
+                    "outlay": outlay, "pnl": pnl, "cost": cost, "equity": equity,
                     "why": hit["why"], **sim,
                 }
                 trades.append(rec)
@@ -482,5 +500,7 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
             "max_drawdown": round(max_dd, 2),
             "risk_pct": risk_pct, "lot_size": lot,
             "skipped_unaffordable": skipped,
+            "total_costs": round(sum(t.get("cost", 0) for t in taken), 2),
+            "cost_model": f"₹{brokerage}/trade + {slip_pct}%/side slippage",
         },
     }

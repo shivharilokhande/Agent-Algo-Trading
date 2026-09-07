@@ -81,6 +81,8 @@ export default function Scalp() {
   const [btDays, setBtDays] = useState(7);
   const [btCapital, setBtCapital] = useState(100000);
   const [btRisk, setBtRisk] = useState(1.0);
+  const [btBrokerage, setBtBrokerage] = useState(50);
+  const [btSlip, setBtSlip] = useState(0.25);
 
   const btInputsOk = Number.isFinite(btCapital) && btCapital >= 10000
     && Number.isFinite(btRisk) && btRisk >= 0.1 && btRisk <= 10;
@@ -89,7 +91,8 @@ export default function Scalp() {
     setBtBusy(true); setErr(""); setBt(null);
     try {
       setBt(await api.post(
-        `/api/scalp/backtest?symbol=${btSym}&days=${btDays}&capital=${btCapital}&risk_pct=${btRisk}`));
+        `/api/scalp/backtest?symbol=${btSym}&days=${btDays}&capital=${btCapital}` +
+        `&risk_pct=${btRisk}&brokerage=${btBrokerage}&slippage_pct=${btSlip}`));
     } catch (ex: any) { setErr(ex.message); } finally { setBtBusy(false); }
   }
 
@@ -220,6 +223,10 @@ export default function Scalp() {
             value={btCapital} onChange={(e) => setBtCapital(Number(e.target.value))} /></label>
           <label>Risk %/trade <input type="number" step="0.1" min="0.1" max="10" style={{ width: 60 }}
             value={btRisk} onChange={(e) => setBtRisk(Number(e.target.value))} /></label>
+          <label>Cost ₹/trade <input type="number" step="10" min="0" max="500" style={{ width: 60 }}
+            value={btBrokerage} onChange={(e) => setBtBrokerage(Number(e.target.value))} /></label>
+          <label>Slip %/side <input type="number" step="0.05" min="0" max="2" style={{ width: 60 }}
+            value={btSlip} onChange={(e) => setBtSlip(Number(e.target.value))} /></label>
           <button className="small" disabled={btBusy || !btInputsOk} onClick={runBacktest}
             title={btInputsOk ? "" : "Capital ≥ ₹10,000 and risk 0.1–10%"}>
             {btBusy ? "Replaying…" : "Run backtest"}
@@ -232,7 +239,7 @@ export default function Scalp() {
             <div className="grid4" style={{ marginTop: 12 }}>
               <div className="stat"><div className="v" style={{ color: bt.summary.net_pnl >= 0 ? "var(--green)" : "var(--red)" }}>
                 ₹{Number(bt.summary.net_pnl).toLocaleString("en-IN")}</div>
-                <div className="l">Net P&L ({bt.summary.return_pct}%) · ₹{Number(bt.summary.capital_start).toLocaleString("en-IN")} → ₹{Number(bt.summary.capital_end).toLocaleString("en-IN")}</div></div>
+                <div className="l">Net P&L ({bt.summary.return_pct}%) after ₹{Number(bt.summary.total_costs ?? 0).toLocaleString("en-IN")} costs · ₹{Number(bt.summary.capital_start).toLocaleString("en-IN")} → ₹{Number(bt.summary.capital_end).toLocaleString("en-IN")}</div></div>
               <div className="stat"><div className="v" style={{ color: "var(--red)" }}>₹{Number(bt.summary.max_drawdown).toLocaleString("en-IN")}</div>
                 <div className="l">Max drawdown{bt.summary.skipped_unaffordable ? ` · ${bt.summary.skipped_unaffordable} skipped (0 lots)` : ""}</div></div>
               <div className="stat"><div className="v" style={{ color: bt.summary.total_r >= 0 ? "var(--green)" : "var(--red)" }}>
