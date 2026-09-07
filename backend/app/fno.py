@@ -284,8 +284,18 @@ def _live_spot_sync(fno_symbol: str) -> float:
 
 
 async def get_live_spot(fno_symbol: str) -> float:
-    """Near-real-time NSE spot (≈1 min cache) — much lighter than the full chain."""
+    """Live spot: Zerodha Kite when a session is connected (real-time, uncached),
+    else the NSE endpoint (≈1 min cache)."""
     key = fno_symbol.upper()
+    try:  # broker feed first — best freshness for Level Watch / scalp premiums
+        from .kite_data import kite_spot
+
+        spot = await asyncio.to_thread(kite_spot, key)
+        if spot:
+            _spot_cache[key] = (time.time(), spot)
+            return spot
+    except Exception:  # noqa: BLE001 — never let the broker path break the free path
+        pass
     now = time.time()
     if key in _spot_cache and now - _spot_cache[key][0] < SPOT_TTL:
         return _spot_cache[key][1]

@@ -403,8 +403,16 @@ async def scalp_sweep() -> int:
                 if not bias_allows(hit["direction"], bias):
                     continue
                 sig = build_scalp_signal(symbol, hit, snapshot, cfg)
-                if sig and await asyncio.to_thread(emit_signal, user_id, sig):
-                    emitted += 1
+                if sig:
+                    try:  # broker-grade premium when a Kite session is live
+                        from .kite_data import refine_signal_with_kite
+
+                        sig = await asyncio.to_thread(
+                            refine_signal_with_kite, sig, snapshot.get("expiry"))
+                    except Exception:  # noqa: BLE001
+                        pass
+                    if await asyncio.to_thread(emit_signal, user_id, sig):
+                        emitted += 1
     return emitted
 
 

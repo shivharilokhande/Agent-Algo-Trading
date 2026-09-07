@@ -178,6 +178,52 @@ def get_briefing(
             "updated_at": row.updated_at if row else None}
 
 
+# ==================== Zerodha Kite (data only — never orders) ====================
+
+class KiteSessionIn(BaseModel):
+    request_token: str = Field(min_length=8, max_length=128)
+
+
+@router.get("/kite/login-url")
+def kite_login_url(user: Annotated[User, Depends(get_current_user)]):
+    from .. import kite_data
+
+    url = kite_data.login_url(user.id)
+    if url is None:
+        raise HTTPException(status_code=400,
+                            detail="Add your Kite credential first (Settings → API Keys → "
+                                   "Zerodha Kite: secret = API secret, api_key field = API key)")
+    return {"login_url": url,
+            "hint": ("Log in, get redirected to your app's redirect URL, copy the "
+                     "request_token query parameter and paste it here. Needed once per day.")}
+
+
+@router.post("/kite/session")
+async def kite_session(
+    body: KiteSessionIn,
+    user: Annotated[User, Depends(get_current_user)],
+):
+    import asyncio
+
+    from .. import kite_data
+
+    try:
+        return await asyncio.to_thread(kite_data.exchange_session, user.id, body.request_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Kite session exchange failed: {exc}") from exc
+
+
+@router.get("/kite/status")
+async def kite_status(user: Annotated[User, Depends(get_current_user)]):
+    import asyncio
+
+    from .. import kite_data
+
+    return await asyncio.to_thread(kite_data.status, user.id)
+
+
 # ==================== Scalp Mode ====================
 
 @router.get("/scalp/signals")

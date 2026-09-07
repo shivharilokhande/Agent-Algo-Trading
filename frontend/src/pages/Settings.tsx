@@ -2,6 +2,66 @@ import { useEffect, useState } from "react";
 import { api, KeyOut, ProviderInfo } from "../api";
 
 // C11 — provider-specific extra credential fields (stored in the vault's `extra`)
+function KiteConnectCard({ hasKey, onMsg }: { hasKey: boolean; onMsg: (m: any) => void }) {
+  const [st, setSt] = useState<any>(null);
+  const [reqToken, setReqToken] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function refresh() {
+    try { setSt(await api.get("/api/kite/status")); } catch { /* not configured */ }
+  }
+  useEffect(() => { refresh(); }, [hasKey]);
+
+  async function openLogin() {
+    try {
+      const r = await api.get<any>("/api/kite/login-url");
+      window.open(r.login_url, "_blank");
+    } catch (ex: any) { onMsg({ kind: "error", text: ex.message }); }
+  }
+  async function connect() {
+    setBusy(true);
+    try {
+      const r = await api.post<any>("/api/kite/session", { request_token: reqToken.trim() });
+      onMsg({ kind: "ok", text: `Kite connected (${r.kite_user}) — live broker data active for today.` });
+      setReqToken("");
+      await refresh();
+    } catch (ex: any) { onMsg({ kind: "error", text: ex.message }); } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="card">
+      <h3>Zerodha Kite — live broker data <span className="muted">(data only, never orders)</span></h3>
+      {!hasKey ? (
+        <p className="muted">Add the "Zerodha Kite Connect" credential above first
+          (secret = your API <b>secret</b>, extra field = your API <b>key</b>).</p>
+      ) : (
+        <>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Status: {st?.connected
+              ? <b style={{ color: "var(--green)" }}>CONNECTED — NIFTY LTP {st.nifty_ltp ?? "…"}</b>
+              : <b style={{ color: "var(--red)" }}>not connected today</b>}
+            {" "}· Zerodha requires a fresh login every morning: click Login, finish the Kite login,
+            then copy the <code>request_token</code> from the redirect URL and paste it here.
+          </p>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button className="small" onClick={openLogin}>1. Kite login ↗</button>
+            <input style={{ width: 320 }} placeholder="2. paste request_token"
+              value={reqToken} onChange={(e) => setReqToken(e.target.value)} />
+            <button className="small" disabled={busy || reqToken.trim().length < 8} onClick={connect}>
+              {busy ? "Connecting…" : "3. Connect"}
+            </button>
+          </div>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            When connected: Level Watch uses real-time spot, and scalp signals price from the
+            actual bid/ask of the exact strike. When not connected everything falls back to the
+            free NSE/yfinance feeds automatically.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 const EXTRA_FIELDS: Record<string, { key: string; label: string; ph: string; secret?: boolean }[]> = {
   ollama: [{ key: "base_url", label: "Base URL", ph: "http://localhost:11434/v1" }],
   openai_compatible: [{ key: "base_url", label: "Base URL", ph: "http://localhost:8000/v1 (vLLM) or :1234/v1 (LM Studio)" }],
@@ -13,6 +73,7 @@ const EXTRA_FIELDS: Record<string, { key: string; label: string; ph: string; sec
     { key: "secret_access_key", label: "AWS secret access key", ph: "", secret: true },
     { key: "region", label: "AWS region", ph: "us-east-1" },
   ],
+  kite: [{ key: "api_key", label: "Kite API key", ph: "from developers.kite.trade (secret field above = API secret)" }],
 };
 
 export default function Settings() {
@@ -161,6 +222,8 @@ export default function Settings() {
         <p className="muted">yfinance and Polymarket need no key. Alpha Vantage / FRED unlock alternative
           vendor chains for stocks, news, fundamentals, and macro data.</p>
       </div>
+
+      <KiteConnectCard hasKey={!!keyFor("kite")} onMsg={setMsg} />
 
       <div className="card">
         <h3>Analysis defaults</h3>

@@ -150,6 +150,8 @@ PROVIDERS: list[dict] = [
 DATA_PROVIDERS: list[dict] = [
     {"id": "alpha_vantage", "name": "Alpha Vantage (stocks/news/fundamentals)", "kind": "key", "env": "ALPHA_VANTAGE_API_KEY"},
     {"id": "fred", "name": "FRED (macro indicators)", "kind": "key", "env": "FRED_API_KEY"},
+    {"id": "kite", "name": "Zerodha Kite Connect (live NSE spot + option quotes — data only, never orders)",
+     "kind": "key", "env": "KITE_API_KEY"},
 ]
 
 DEPTHS = [
