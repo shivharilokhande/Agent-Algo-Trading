@@ -192,6 +192,8 @@ async def scalp_backtest(
     user: Annotated[User, Depends(get_current_user)],
     symbol: str = "NIFTY",
     days: int = 7,
+    capital: float = 100_000.0,
+    risk_pct: float = 1.0,
 ):
     """Replay the last ≤7 sessions through the live rule code (modeled premiums)."""
     import asyncio
@@ -202,8 +204,30 @@ async def scalp_backtest(
     if symbol not in ("NIFTY", "BANKNIFTY", "FINNIFTY"):
         raise HTTPException(status_code=422, detail="symbol must be NIFTY/BANKNIFTY/FINNIFTY")
     days = max(1, min(days, 7))
+    capital = max(10_000.0, min(capital, 100_000_000.0))
+    risk_pct = max(0.1, min(risk_pct, 10.0))
     try:
-        return await asyncio.to_thread(backtest_symbol, symbol, days)
+        return await asyncio.to_thread(backtest_symbol, symbol, days, capital, risk_pct)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"History unavailable: {exc}") from exc
+
+
+@router.post("/scalp/backtest/compare")
+async def scalp_backtest_compare(
+    user: Annotated[User, Depends(get_current_user)],
+    symbol: str = "NIFTY",
+    days: int = 7,
+):
+    """Same historical signals under three exit policies (fixed / trail / hybrid)."""
+    import asyncio
+
+    from ..backtest import compare_exit_policies
+
+    symbol = symbol.upper()
+    if symbol not in ("NIFTY", "BANKNIFTY", "FINNIFTY"):
+        raise HTTPException(status_code=422, detail="symbol must be NIFTY/BANKNIFTY/FINNIFTY")
+    try:
+        return await asyncio.to_thread(compare_exit_policies, symbol, max(1, min(days, 7)))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"History unavailable: {exc}") from exc
 

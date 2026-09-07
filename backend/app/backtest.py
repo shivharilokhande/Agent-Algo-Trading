@@ -74,10 +74,101 @@ def _simulate_trade(bars: list[dict], i: int, direction: str) -> dict:
             "bars_held": end - i}
 
 
-def backtest_symbol(symbol: str, days: int = 7) -> dict:
-    """Walk each session bar-by-bar through evaluate_rules; simulate every signal."""
+HARD_CAP_MIN = 45  # trailing policies: absolute max holding time
+
+
+def _simulate_policy(bars: list[dict], i: int, direction: str, policy: str) -> dict:
+    """Simulate one trade under an exit policy. R units; conservative ordering.
+
+    A fixed  : SL −1R / TP +1.5R / exit at 20 min (the live behavior today)
+    B trail  : SL −1R; at +0.5R move stop to breakeven, then trail 0.5R off the
+               peak; no target cap; hard cap 45 min
+    C hybrid : B, plus 'loser time-out' — if +0.5R never reached by 20 min, exit
+    """
+    spot0 = bars[i]["c"]
+    p0 = spot0 * ATM_PREMIUM_PCT / 100
+    risk = p0 * SCALP_SL_PCT / 100
+    sign = 1.0 if direction == "CE" else -1.0
+    to_r = lambda px: sign * (px - spot0) * ASSUMED_DELTA / risk  # noqa: E731
+    end = min(i + (SCALP_TIME_STOP_MIN if policy == "A" else HARD_CAP_MIN), len(bars) - 1)
+    peak, be_armed = 0.0, False
+    for j in range(i + 1, end + 1):
+        hi, lo = bars[j]["h"], bars[j]["l"]
+        fav = to_r(hi if direction == "CE" else lo)
+        adv = to_r(lo if direction == "CE" else hi)  # most adverse close-equivalent
+        close_r = to_r(bars[j]["c"])
+        if policy == "A":
+            if adv <= -1.0:
+                return {"outcome": "SL", "r": -1.0, "bars_held": j - i}
+            if fav >= SCALP_RR:
+                return {"outcome": "TP", "r": SCALP_RR, "bars_held": j - i}
+            continue
+        # B / C — stops first (conservative), using state from BEFORE this bar
+        if not be_armed and adv <= -1.0:
+            return {"outcome": "SL", "r": -1.0, "bars_held": j - i}
+        if be_armed and adv <= 0.0:
+            return {"outcome": "BE", "r": 0.0, "bars_held": j - i}
+        if be_armed and close_r <= peak - 0.5:
+            return {"outcome": "TRAIL", "r": round(close_r, 2), "bars_held": j - i}
+        peak = max(peak, fav)
+        if peak >= 0.5:
+            be_armed = True
+        if policy == "C" and j - i >= SCALP_TIME_STOP_MIN and not be_armed:
+            return {"outcome": "TIME", "r": round(close_r, 2), "bars_held": j - i}
+    return {"outcome": "TIME", "r": round(to_r(bars[end]["c"]), 2), "bars_held": end - i}
+
+
+def compare_exit_policies(symbol: str, days: int = 7) -> dict:
+    """Same signals, three exit policies, side-by-side summaries."""
+    sessions = fetch_history_sessions(symbol, days)
+    signals: list[tuple[list[dict], int, str, str, str]] = []
+    for day, bars in sessions.items():
+        last_fire: dict[str, int] = {}
+        for i in range(OPENING_RANGE_MIN + 5, len(bars)):
+            if bars[i]["hm"] >= THETA_CUTOFF:
+                break
+            for hit in evaluate_rules(bars[: i + 1]):
+                if i - last_fire.get(hit["rule"], -10_000) < COOLDOWN_MIN:
+                    continue
+                last_fire[hit["rule"]] = i
+                signals.append((bars, i, hit["direction"], hit["rule"], day))
+    policies = {"A_fixed_20m": "A", "B_trail": "B", "C_hybrid": "C"}
+    out: dict = {"symbol": symbol, "sessions": list(sessions.keys()),
+                 "n_signals": len(signals), "policies": {}}
+    for name, p in policies.items():
+        rs = [_simulate_policy(bars, i, d, p) for bars, i, d, _, _ in signals]
+        total = round(sum(x["r"] for x in rs), 2)
+        winners = [x["r"] for x in rs if x["r"] > 0.05]
+        losers = [x["r"] for x in rs if x["r"] < -0.05]
+        out["policies"][name] = {
+            "net_r": total,
+            "expectancy_r": round(total / len(rs), 3) if rs else None,
+            "winners": len(winners), "losers": len(losers),
+            "flat": len(rs) - len(winners) - len(losers),
+            "avg_winner_r": round(sum(winners) / len(winners), 2) if winners else None,
+            "avg_loser_r": round(sum(losers) / len(losers), 2) if losers else None,
+            "best_r": round(max((x["r"] for x in rs), default=0), 2),
+            "avg_hold_min": round(sum(x["bars_held"] for x in rs) / len(rs), 1) if rs else None,
+        }
+    return out
+
+
+def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
+                    risk_pct: float = 1.0) -> dict:
+    """Walk each session bar-by-bar through evaluate_rules; simulate every signal.
+
+    Rupee simulation: live sizing rules applied on RUNNING equity (compounding) —
+    lots = risk budget ÷ risk per lot, premium outlay capped at 30% of equity.
+    Trades the equity can't afford (0 lots) are recorded as skipped.
+    """
+    from .fno import DEFAULT_LOT_SIZES, size_position
+
+    lot = DEFAULT_LOT_SIZES.get(symbol)
     sessions = fetch_history_sessions(symbol, days)
     trades: list[dict] = []
+    equity = capital
+    peak_equity, max_dd = capital, 0.0
+    skipped = 0
     for day, bars in sessions.items():
         last_fire: dict[str, int] = {}  # rule -> bar index (cooldown)
         for i in range(OPENING_RANGE_MIN + 5, len(bars)):
@@ -89,9 +180,25 @@ def backtest_symbol(symbol: str, days: int = 7) -> dict:
                     continue
                 last_fire[hit["rule"]] = i
                 sim = _simulate_trade(bars, i, hit["direction"])
+                spot0 = bars[i]["c"]
+                ep = round(spot0 * ATM_PREMIUM_PCT / 100, 2)
+                risk = round(ep * SCALP_SL_PCT / 100, 2)
+                exit_p = round(ep + sim["r"] * risk, 2)
+                sizing = size_position(ep, round(ep - risk, 2), lot, equity, risk_pct)
+                lots = sizing.get("lots") or 0
+                pnl = round(sim["r"] * risk * lot * lots, 2) if lots else 0.0
+                if lots:
+                    equity = round(equity + pnl, 2)
+                    peak_equity = max(peak_equity, equity)
+                    max_dd = max(max_dd, peak_equity - equity)
+                else:
+                    skipped += 1
                 trades.append({
                     "day": day, "time": bars[i]["t"][11:16], "rule": hit["rule"],
-                    "direction": hit["direction"], "spot": round(bars[i]["c"], 1),
+                    "direction": hit["direction"], "spot": round(spot0, 1),
+                    "entry": ep, "exit": exit_p, "lots": lots,
+                    "outlay": round(ep * lot * lots, 2) if lots else 0.0,
+                    "pnl": pnl, "equity": equity,
                     "why": hit["why"], **sim,
                 })
     wins = [t for t in trades if t["outcome"] == "TP"]
@@ -120,5 +227,11 @@ def backtest_symbol(symbol: str, days: int = 7) -> dict:
             "win_rate": round(len(wins) / len(trades), 3) if trades else None,
             "total_r": total_r,
             "expectancy_r": round(total_r / len(trades), 3) if trades else None,
+            "capital_start": capital, "capital_end": equity,
+            "net_pnl": round(equity - capital, 2),
+            "return_pct": round((equity - capital) / capital * 100, 2) if capital else None,
+            "max_drawdown": round(max_dd, 2),
+            "risk_pct": risk_pct, "lot_size": lot,
+            "skipped_unaffordable": skipped,
         },
     }

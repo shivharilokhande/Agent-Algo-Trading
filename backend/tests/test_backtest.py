@@ -43,6 +43,32 @@ def test_simulate_tp_and_sl():
     assert sim["outcome"] == "SL"
 
 
+def test_exit_policy_comparison():
+    from app.backtest import ASSUMED_DELTA, ATM_PREMIUM_PCT, _simulate_policy
+    from app.scalp import SCALP_RR, SCALP_SL_PCT
+
+    spot0 = 24000.0
+    risk_spot = (spot0 * ATM_PREMIUM_PCT / 100) * (SCALP_SL_PCT / 100) / ASSUMED_DELTA
+    # big runner: climbs steadily for 40 bars — trail should beat the fixed 1.5R cap
+    runner = [spot0 + risk_spot * 0.15 * k for k in range(45)]
+    a = _simulate_policy(_bars(runner), 0, "CE", "A")
+    b = _simulate_policy(_bars(runner), 0, "CE", "B")
+    assert a["outcome"] == "TP" and a["r"] == SCALP_RR
+    assert b["r"] > a["r"]  # trail lets the winner run past 1.5R
+    # stall: flat 45 bars — hybrid times out at 20m, pure trail sits to the cap
+    flat = [spot0] * 46
+    c = _simulate_policy(_bars(flat), 0, "CE", "C")
+    b2 = _simulate_policy(_bars(flat), 0, "CE", "B")
+    assert c["outcome"] == "TIME" and c["bars_held"] == 20
+    assert b2["bars_held"] > c["bars_held"]
+    # pop to +0.6R then full reverse: breakeven stop turns a -1R into 0
+    pop = [spot0, spot0 + risk_spot * 0.6] + [spot0 - risk_spot * 1.5] * 20
+    bars = _bars(pop)
+    bars[1]["h"] = spot0 + risk_spot * 0.6 + 1
+    c2 = _simulate_policy(bars, 0, "CE", "C")
+    assert c2["outcome"] == "BE" and c2["r"] == 0.0
+
+
 def test_backtest_symbol_walkforward(monkeypatch):
     from app import backtest as bt
 

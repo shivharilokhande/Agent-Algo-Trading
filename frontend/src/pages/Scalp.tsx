@@ -68,11 +68,14 @@ export default function Scalp() {
   const [bt, setBt] = useState<any>(null);
   const [btBusy, setBtBusy] = useState(false);
   const [btSym, setBtSym] = useState("NIFTY");
+  const [btCapital, setBtCapital] = useState(100000);
+  const [btRisk, setBtRisk] = useState(1.0);
 
   async function runBacktest() {
     setBtBusy(true); setErr(""); setBt(null);
     try {
-      setBt(await api.post(`/api/scalp/backtest?symbol=${btSym}&days=7`));
+      setBt(await api.post(
+        `/api/scalp/backtest?symbol=${btSym}&days=7&capital=${btCapital}&risk_pct=${btRisk}`));
     } catch (ex: any) { setErr(ex.message); } finally { setBtBusy(false); }
   }
 
@@ -182,6 +185,10 @@ export default function Scalp() {
           <select value={btSym} onChange={(e) => setBtSym(e.target.value)}>
             {ALL_SYMBOLS.map((s) => <option key={s}>{s}</option>)}
           </select>
+          <label>Capital ₹ <input type="number" step="10000" min="10000" style={{ width: 110 }}
+            value={btCapital} onChange={(e) => setBtCapital(Number(e.target.value))} /></label>
+          <label>Risk %/trade <input type="number" step="0.1" min="0.1" max="10" style={{ width: 60 }}
+            value={btRisk} onChange={(e) => setBtRisk(Number(e.target.value))} /></label>
           <button className="small" disabled={btBusy} onClick={runBacktest}>
             {btBusy ? "Replaying…" : "Run backtest"}
           </button>
@@ -190,29 +197,36 @@ export default function Scalp() {
         {bt && (
           <>
             <div className="grid4" style={{ marginTop: 12 }}>
-              <div className="stat"><div className="v">{bt.summary.n}</div><div className="l">Signals</div></div>
-              <div className="stat"><div className="v" style={{ color: (bt.summary.win_rate ?? 0) >= 0.4 ? "var(--green)" : "var(--red)" }}>
-                {bt.summary.win_rate === null ? "—" : (bt.summary.win_rate * 100).toFixed(0) + "%"}</div>
-                <div className="l">Win rate (TP {bt.summary.tp} / SL {bt.summary.sl} / time {bt.summary.time_exits})</div></div>
+              <div className="stat"><div className="v" style={{ color: bt.summary.net_pnl >= 0 ? "var(--green)" : "var(--red)" }}>
+                ₹{Number(bt.summary.net_pnl).toLocaleString("en-IN")}</div>
+                <div className="l">Net P&L ({bt.summary.return_pct}%) · ₹{Number(bt.summary.capital_start).toLocaleString("en-IN")} → ₹{Number(bt.summary.capital_end).toLocaleString("en-IN")}</div></div>
+              <div className="stat"><div className="v" style={{ color: "var(--red)" }}>₹{Number(bt.summary.max_drawdown).toLocaleString("en-IN")}</div>
+                <div className="l">Max drawdown{bt.summary.skipped_unaffordable ? ` · ${bt.summary.skipped_unaffordable} skipped (0 lots)` : ""}</div></div>
               <div className="stat"><div className="v" style={{ color: bt.summary.total_r >= 0 ? "var(--green)" : "var(--red)" }}>
-                {bt.summary.total_r}R</div><div className="l">Net result</div></div>
-              <div className="stat"><div className="v">{bt.summary.expectancy_r ?? "—"}R</div><div className="l">Expectancy / trade</div></div>
+                {bt.summary.total_r}R</div><div className="l">{bt.summary.n} signals · expectancy {bt.summary.expectancy_r ?? "—"}R</div></div>
+              <div className="stat"><div className="v">{bt.summary.win_rate === null ? "—" : (bt.summary.win_rate * 100).toFixed(0) + "%"}</div>
+                <div className="l">Full-target rate (TP {bt.summary.tp} / SL {bt.summary.sl} / time {bt.summary.time_exits})</div></div>
             </div>
             <table style={{ marginTop: 8 }}>
-              <thead><tr><th>Day</th><th>Time</th><th>Rule</th><th>Dir</th><th>Spot</th>
-                <th>Outcome</th><th>R</th><th>Held</th></tr></thead>
+              <thead><tr><th>Day</th><th>Time</th><th>Rule</th><th>Dir</th><th>Entry</th><th>Exit</th>
+                <th>Lots</th><th>Capital used</th><th>P&L ₹</th><th>Outcome</th><th>Equity</th></tr></thead>
               <tbody>
                 {bt.trades.map((t: any, i: number) => (
-                  <tr key={i}>
+                  <tr key={i} style={t.lots === 0 ? { opacity: 0.55 } : undefined}>
                     <td className="mono">{t.day}</td><td className="mono">{t.time}</td>
                     <td><b>{t.rule}</b></td><td>{t.direction}</td>
-                    <td className="mono">{t.spot}</td>
-                    <td><span className={`pill ${t.outcome === "TP" ? "done" : t.outcome === "SL" ? "failed" : "interrupted"}`}>{t.outcome}</span></td>
-                    <td className="mono" style={{ color: t.r >= 0 ? "var(--green)" : "var(--red)" }}>{t.r > 0 ? "+" : ""}{t.r}</td>
-                    <td className="muted">{t.bars_held}m</td>
+                    <td className="mono">₹{t.entry}</td>
+                    <td className="mono">₹{t.exit}</td>
+                    <td>{t.lots === 0 ? <span className="pill failed" style={{ fontSize: 10 }}>skip</span> : t.lots}</td>
+                    <td className="mono">{t.outlay ? "₹" + Number(t.outlay).toLocaleString("en-IN") : "—"}</td>
+                    <td className="mono" style={{ color: t.pnl >= 0 ? "var(--green)" : "var(--red)" }}>
+                      {t.pnl ? (t.pnl > 0 ? "+" : "") + Number(t.pnl).toLocaleString("en-IN") : "—"}</td>
+                    <td><span className={`pill ${t.outcome === "TP" ? "done" : t.outcome === "SL" ? "failed" : "interrupted"}`}>{t.outcome}</span>
+                      <span className="muted" style={{ fontSize: 11 }}> {t.r > 0 ? "+" : ""}{t.r}R · {t.bars_held}m</span></td>
+                    <td className="mono">₹{Number(t.equity).toLocaleString("en-IN")}</td>
                   </tr>
                 ))}
-                {bt.trades.length === 0 && <tr><td colSpan={8} className="muted">No signals fired in these sessions — quiet tape.</td></tr>}
+                {bt.trades.length === 0 && <tr><td colSpan={11} className="muted">No signals fired in these sessions — quiet tape.</td></tr>}
               </tbody>
             </table>
             <p className="muted" style={{ marginBottom: 0, fontSize: 12 }}>{bt.assumptions.note} Premium model:
