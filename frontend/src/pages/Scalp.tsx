@@ -36,7 +36,7 @@ export default function Scalp() {
       setStatus(await api.get<Status>("/api/scalp/status"));
       setSignals(await api.get<Signal[]>("/api/scalp/signals"));
       try {  // paper card refreshes with the poll (R6-F2) — its errors don't banner
-        setPaper(await api.get<any>("/api/scalp/paper?days=14"));
+        setPaper(await api.get<any>("/api/scalp/paper?days=30"));
       } catch { /* transient — next poll retries */ }
       const s = await api.get<any>("/api/settings");
       // R6-F1: a GET issued before a save (or resolving during one) must never
@@ -242,13 +242,34 @@ export default function Scalp() {
       </div>
 
       <div className="card">
-        <h3>Paper week <span className="muted">— the go-live gate: real signals scored on actual candles</span></h3>
+        <h3>Paper month <span className="muted">— the go-live gate: real signals scored on actual candles (last 30 days)</span></h3>
+        {paper?.today_live?.length > 0 && (
+          <div style={{ marginBottom: 10, padding: "6px 10px", background: "var(--bg-subtle, #f6f7f8)", borderRadius: 6, fontSize: 12 }}>
+            <b>Today, live:</b>{" "}
+            {paper.today_live.map((s: any, i: number) => (
+              <span key={i} style={{ marginRight: 12, whiteSpace: "nowrap" }}>
+                {s.time} {s.symbol} {s.rule} →{" "}
+                <b style={{ color: s.status === "TP" ? "var(--green)" : s.status === "SL" ? "var(--red)"
+                  : s.r != null && s.r > 0 ? "var(--green)" : s.r != null && s.r < 0 ? "var(--red)" : undefined }}>
+                  {s.status}{s.r != null ? ` ${s.r >= 0 ? "+" : ""}${s.r}R` : ""}
+                </b>
+                {s.pnl != null && <span className="muted"> ({s.pnl >= 0 ? "+" : ""}{Math.round(s.pnl).toLocaleString("en-IN")})</span>}
+              </span>
+            ))}
+            <span className="muted"> · provisional — finalized after 15:35 IST</span>
+          </div>
+        )}
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           {paper?.total?.n ? (
             <>
               <span><b>{paper.total.win_pct}%</b> profitable ({paper.total.wins}/{paper.total.n})</span>
               <span>net <b style={{ color: paper.total.sum_r >= 0 ? "var(--green)" : "var(--red)" }}>
                 {paper.total.sum_r >= 0 ? "+" : ""}{paper.total.sum_r}R</b></span>
+              {paper.total.sum_pnl != null && (
+                <span>₹ <b style={{ color: paper.total.sum_pnl >= 0 ? "var(--green)" : "var(--red)" }}>
+                  {paper.total.sum_pnl >= 0 ? "+" : ""}{Math.round(paper.total.sum_pnl).toLocaleString("en-IN")}</b>
+                  <span className="muted"> after charges, at your live sizing</span></span>
+              )}
               <span className="muted">expectancy {paper.total.expectancy_r}R/trade</span>
               {paper.wall_reject && (
                 <span className="muted">
@@ -265,7 +286,7 @@ export default function Scalp() {
         </div>
         {paper?.days?.length > 0 && (
           <table style={{ marginTop: 10 }}>
-            <thead><tr><th>Day</th><th>Signals</th><th>Profitable</th><th>Net R</th><th>Detail</th></tr></thead>
+            <thead><tr><th>Day</th><th>Signals</th><th>Profitable</th><th>Net R</th><th>Net ₹</th><th>Detail</th></tr></thead>
             <tbody>
               {paper.days.map((d: any) => (
                 <tr key={d.day}>
@@ -274,6 +295,9 @@ export default function Scalp() {
                   <td>{d.wins} ({d.n ? Math.round((d.wins / d.n) * 100) : 0}%)</td>
                   <td className="mono" style={{ color: d.sum_r >= 0 ? "var(--green)" : "var(--red)" }}>
                     {d.sum_r >= 0 ? "+" : ""}{d.sum_r}R
+                  </td>
+                  <td className="mono" style={{ color: (d.sum_pnl ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
+                    {d.sum_pnl != null ? `${d.sum_pnl >= 0 ? "+" : ""}${Math.round(d.sum_pnl).toLocaleString("en-IN")}` : "—"}
                   </td>
                   <td className="muted" style={{ fontSize: 11, maxWidth: 420 }}>
                     {d.signals.map((s: any, i: number) => (

@@ -84,6 +84,47 @@ def test_score_day_and_summary(client, auth, monkeypatch):
     assert client.get("/api/scalp/paper?days=99", headers=auth).status_code == 422
 
 
+def test_rupee_pnl_and_provisional_today(client, auth, monkeypatch):
+    """Paper month: ₹ P&L from real sizing + live provisional strip."""
+    from app.backtest import trade_cost
+    from app.db import SessionLocal
+    from app.models import ScalpSignal, User
+    from app.paper_score import _rupee_pnl, provisional_today
+
+    # ₹ math: ep 100, sl 82 (risk 18), TP +1.5R, 2 lots of 65
+    p = {"ep": 100.0, "sl": 82.0, "sizing": {"lots": 2, "lot_size": 65}}
+    pnl, cost = _rupee_pnl(p, "NIFTY", 1.5)
+    assert cost == trade_cost(100.0, 127.0, 65, 2)
+    assert pnl == round(1.5 * 18.0 * 65 * 2 - cost, 2)
+    assert _rupee_pnl({"ep": 100.0}, "NIFTY", 1.5) == (None, None)  # no sizing
+
+    with SessionLocal() as db:
+        uid = db.query(User).filter(User.email == "tester@agentalgo.dev").first().id
+        db.query(ScalpSignal).filter(ScalpSignal.user_id == uid).delete()
+        now_ist = datetime.now(IST)
+        created_utc = datetime(now_ist.year, now_ist.month, now_ist.day, 10, 1,
+                               tzinfo=IST).astimezone(timezone.utc).replace(tzinfo=None)
+        db.add(ScalpSignal(user_id=uid, symbol="NIFTY", rule="ORB", direction="CE",
+                           instrument="NIFTY 24000 CE", payload_json=json.dumps(p),
+                           simulated=False, created_at=created_utc))
+        db.commit()
+
+    day = datetime.now(IST).date().isoformat()
+    rally = _bars(day, [24000 + 15 * i for i in range(10)])
+    monkeypatch.setattr("app.scalp.fetch_session_bars", lambda sym: rally)
+    live = provisional_today(uid)
+    assert len(live) == 1 and live[0]["status"] == "TP" and live[0]["r"] == 1.5
+    assert live[0]["pnl"] == pnl
+    # short flat session → window incomplete, no bracket hit → OPEN
+    flat = _bars(day, [24000.0] * 6)
+    monkeypatch.setattr("app.scalp.fetch_session_bars", lambda sym: flat)
+    assert provisional_today(uid)[0]["status"] == "OPEN"
+
+    with SessionLocal() as db:
+        db.query(ScalpSignal).filter(ScalpSignal.user_id == uid).delete()
+        db.commit()
+
+
 def test_live_day_sl_count_feeds_day_stop(client, auth, monkeypatch):
     """2-SL day stop: intraday SL counter on today's REAL signals only."""
     # R6-10 fallback would hit the network when bars are missing — stub it here

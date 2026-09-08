@@ -121,6 +121,71 @@ def score_day(day_iso: str | None = None, user_id: str | None = None) -> int:
     return scored
 
 
+def _rupee_pnl(p: dict, symbol: str, rr: float) -> tuple[float | None, float | None]:
+    """(net ₹ P&L, ₹ charges) for a scored signal, from its REAL sizing.
+
+    Uses the signal's actual ep/sl and lots with the exact Zerodha cost model
+    (default ₹20/order + 0.25%/side slippage) — same math as the backtest, so
+    the paper month reads like a backtest run on live signals."""
+    from .backtest import trade_cost
+    from .fno import DEFAULT_LOT_SIZES
+
+    ep = float(p.get("ep") or 0)
+    sl = float(p.get("sl") or 0)
+    lots = (p.get("sizing") or {}).get("lots")
+    lot = (p.get("sizing") or {}).get("lot_size") or DEFAULT_LOT_SIZES.get(symbol)
+    if not (ep and sl and lots and lot):
+        return None, None
+    risk = round(ep - sl, 2)
+    exit_p = max(round(ep + rr * risk, 2), 0.05)
+    cost = trade_cost(ep, exit_p, lot, int(lots))
+    return round(rr * risk * lot * int(lots) - cost, 2), cost
+
+
+def provisional_today(user_id: str) -> list[dict]:
+    """Score TODAY's real signals against the session so far — live tracking.
+
+    Nothing is persisted; final scores land after 15:35 as usual. A trade whose
+    20-minute window hasn't completed (and hit neither bracket) shows as OPEN.
+    """
+    from .db import SessionLocal
+    from .models import ScalpSignal
+    from .scalp import SCALP_TIME_STOP_MIN, fetch_session_bars
+
+    today = datetime.now(IST).date().isoformat()
+    with SessionLocal() as db:
+        rows = (db.query(ScalpSignal)
+                .filter(ScalpSignal.user_id == user_id,
+                        ScalpSignal.simulated.is_(False))
+                .order_by(ScalpSignal.created_at.asc())
+                .all())
+        sigs = [(r.symbol, r.rule, r.direction, json.loads(r.payload_json or "{}"),
+                 _created_ist(r.created_at)) for r in rows
+                if _created_ist(r.created_at).date().isoformat() == today]
+    if not sigs or any("paper" in p for _, _, _, p, _ in sigs):
+        return []  # already finalized (or nothing yet) — the day table covers it
+    bars_cache: dict[str, list[dict]] = {}
+    out = []
+    for symbol, rule, direction, p, created in sigs:
+        if symbol not in bars_cache:
+            try:
+                bars_cache[symbol] = fetch_session_bars(symbol)
+            except Exception:  # noqa: BLE001
+                bars_cache[symbol] = []
+        res = score_signal(p, direction, bars_cache[symbol], created)
+        if res is None:
+            status, rr = "PENDING", None
+        elif res["outcome"] == "TIME" and res["bars_held"] < SCALP_TIME_STOP_MIN:
+            status, rr = "OPEN", res["r"]  # window not complete — provisional mark
+        else:
+            status, rr = res["outcome"], res["r"]
+        pnl, _ = _rupee_pnl(p, symbol, rr) if rr is not None else (None, None)
+        out.append({"time": created.strftime("%H:%M"), "symbol": symbol, "rule": rule,
+                    "instrument": p.get("instrument"), "status": status, "r": rr,
+                    "pnl": pnl})
+    return out
+
+
 def paper_summary(user_id: str, days: int = 14) -> dict:
     """Per-day + cumulative scoreboard of scored real signals for a user."""
     from .db import SessionLocal
@@ -146,15 +211,19 @@ def paper_summary(user_id: str, days: int = 14) -> dict:
             unscored += 1
             continue
         d = by_day.setdefault(day, {"day": day, "n": 0, "wins": 0, "sum_r": 0.0,
-                                    "signals": []})
+                                    "sum_pnl": 0.0, "signals": []})
         rr = float(score["r"])
+        pnl, cost = _rupee_pnl(p, r.symbol, rr)
         d["n"] += 1
         d["wins"] += 1 if rr > 0 else 0
         d["sum_r"] = round(d["sum_r"] + rr, 2)
+        if pnl is not None:
+            d["sum_pnl"] = round(d["sum_pnl"] + pnl, 2)
         d["signals"].append({"time": _created_ist(r.created_at).strftime("%H:%M"),
                              "symbol": r.symbol, "rule": r.rule,
                              "instrument": r.instrument,
-                             "outcome": score["outcome"], "r": rr})
+                             "outcome": score["outcome"], "r": rr,
+                             "pnl": pnl, "cost": cost})
         g = by_rule.setdefault(r.rule, {"rule": r.rule, "n": 0, "wins": 0, "sum_r": 0.0})
         g["n"] += 1
         g["wins"] += 1 if rr > 0 else 0
@@ -164,6 +233,7 @@ def paper_summary(user_id: str, days: int = 14) -> dict:
     n = sum(d["n"] for d in days_list)
     wins = sum(d["wins"] for d in days_list)
     sum_r = round(sum(d["sum_r"] for d in days_list), 2)
+    sum_pnl = round(sum(d["sum_pnl"] for d in days_list), 2)
     trend = {"n": 0, "wins": 0, "sum_r": 0.0}
     for g in by_rule.values():
         if g["rule"] in TREND_RULES:
@@ -178,6 +248,7 @@ def paper_summary(user_id: str, days: int = 14) -> dict:
         "days": days_list,
         "by_rule": sorted(by_rule.values(), key=lambda g: -g["n"]),
         "total": {"n": n, "wins": wins, "win_pct": _pct(wins, n), "sum_r": sum_r,
+                  "sum_pnl": sum_pnl,
                   "expectancy_r": round(sum_r / n, 3) if n else None},
         "trend_rules": {**trend, "win_pct": _pct(trend["wins"], trend["n"])},
         "wall_reject": next((g | {"win_pct": _pct(g["wins"], g["n"])}

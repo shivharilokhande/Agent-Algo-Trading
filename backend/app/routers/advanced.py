@@ -354,16 +354,26 @@ def clear_simulated_signals(
 
 
 @router.get("/scalp/paper")
-def scalp_paper(
+async def scalp_paper(
     user: Annotated[User, Depends(get_current_user)],
     days: int = 14,
+    live: bool = True,
 ):
-    """Paper-week scoreboard: real signals scored on actual candles."""
-    from ..paper_score import paper_summary
+    """Paper scoreboard: real signals scored on actual candles, plus a
+    provisional live view of today's not-yet-finalized signals."""
+    import asyncio
+
+    from ..paper_score import paper_summary, provisional_today
 
     if not 1 <= days <= 60:
         raise HTTPException(status_code=422, detail="days must be 1–60")
-    return paper_summary(user.id, days)
+    out = await asyncio.to_thread(paper_summary, user.id, days)
+    if live:
+        try:
+            out["today_live"] = await asyncio.to_thread(provisional_today, user.id)
+        except Exception:  # noqa: BLE001 — live strip must never break the board
+            out["today_live"] = []
+    return out
 
 
 @router.post("/scalp/paper/score")
