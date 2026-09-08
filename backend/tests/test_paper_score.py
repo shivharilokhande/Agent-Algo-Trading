@@ -78,3 +78,36 @@ def test_score_day_and_summary(client, auth, monkeypatch):
     r = client.post("/api/scalp/paper/score", headers=auth)
     assert r.status_code == 200 and r.json()["scored"] == 0
     assert client.get("/api/scalp/paper?days=99", headers=auth).status_code == 422
+
+
+def test_live_day_sl_count_feeds_day_stop(client, auth):
+    """2-SL day stop: intraday SL counter on today's REAL signals only."""
+    from app.db import SessionLocal
+    from app.models import ScalpSignal, User
+    from app.paper_score import live_day_sl_count
+
+    with SessionLocal() as db:
+        uid = db.query(User).filter(User.email == "tester@agentalgo.dev").first().id
+        db.query(ScalpSignal).filter(ScalpSignal.user_id == uid).delete()
+        now_ist = datetime.now(IST)
+        created_utc = datetime(now_ist.year, now_ist.month, now_ist.day, 10, 0,
+                               tzinfo=IST).astimezone(timezone.utc).replace(tzinfo=None)
+        for i, sim in enumerate([False, False, True]):  # 2 real + 1 sim
+            db.add(ScalpSignal(user_id=uid, symbol="NIFTY", rule="ORB", direction="PE",
+                               instrument="NIFTY 24000 PE",
+                               payload_json=json.dumps({"ep": 100.0}), simulated=sim,
+                               created_at=created_utc))
+        db.commit()
+
+    day = datetime.now(IST).date().isoformat()
+    dump = _bars(day, [24000 + 15 * i for i in range(10)])  # spot UP → PE hits SL
+    # live bars have no 'hm' key — the counter must derive it from 't'
+    live_bars = [{k: v for k, v in b.items() if k != "hm"} for b in dump]
+    assert live_day_sl_count(uid, {"NIFTY": live_bars}) == 2   # sim excluded
+    rally_for_pe = _bars(day, [24000 - 15 * i for i in range(10)])  # PE wins → 0 SLs
+    assert live_day_sl_count(uid, {"NIFTY": rally_for_pe}) == 0
+    assert live_day_sl_count(uid, {}) == 0  # no bars → never blocks
+
+    with SessionLocal() as db:  # cleanup for other tests
+        db.query(ScalpSignal).filter(ScalpSignal.user_id == uid).delete()
+        db.commit()

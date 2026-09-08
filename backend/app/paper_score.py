@@ -30,12 +30,20 @@ def _created_ist(created_at: datetime) -> datetime:
     return created_at.astimezone(IST)
 
 
+def _bar_hm(b: dict) -> tuple[int, int]:
+    """(hour, minute) of a bar — live bars carry only 't', history bars 'hm'."""
+    if "hm" in b:
+        return tuple(b["hm"])  # type: ignore[return-value]
+    t = datetime.fromisoformat(b["t"])
+    return (t.hour, t.minute)
+
+
 def _bar_index_at(bars: list[dict], created: datetime) -> int | None:
     """Last completed bar at/just before the signal minute (entry bar)."""
     hm = (created.hour, created.minute)
     idx = None
     for i, b in enumerate(bars):
-        if tuple(b["hm"]) <= hm:
+        if _bar_hm(b) <= hm:
             idx = i
         else:
             break
@@ -171,6 +179,35 @@ def paper_summary(user_id: str, days: int = 14) -> dict:
         "note": ("Real signals replayed on actual candles under exit policy A. "
                  "WALL_REJECT has no backtest history — judge it here only."),
     }
+
+
+def live_day_sl_count(user_id: str, bars_by_symbol: dict[str, list[dict]]) -> int:
+    """How many of TODAY's real signals have already hit their SL (intraday).
+
+    Replays each real signal against the bars available so far (same math as
+    the after-close scorer). Unresolved / TIME / TP outcomes don't count —
+    only confirmed SLs. Feeds the 2-SL day stop.
+    """
+    from .db import SessionLocal
+    from .models import ScalpSignal
+
+    today = datetime.now(IST).date().isoformat()
+    with SessionLocal() as db:
+        rows = (db.query(ScalpSignal)
+                .filter(ScalpSignal.user_id == user_id,
+                        ScalpSignal.simulated.is_(False))
+                .all())
+        sigs = [(r, json.loads(r.payload_json or "{}")) for r in rows
+                if _created_ist(r.created_at).date().isoformat() == today]
+    count = 0
+    for r, p in sigs:
+        bars = bars_by_symbol.get(r.symbol) or []
+        if not bars:
+            continue
+        res = score_signal(p, r.direction, bars, _created_ist(r.created_at))
+        if res and res["outcome"] == "SL":
+            count += 1
+    return count
 
 
 _last_scored_day: str | None = None

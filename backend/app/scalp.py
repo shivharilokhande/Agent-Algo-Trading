@@ -44,6 +44,11 @@ G_HARD_CAP_MIN = 45
 THETA_CUTOFF = (14, 30)      # no new long-premium signals after 14:30 IST
 OPENING_RANGE_MIN = 15       # ORB window: 09:15–09:30
 COOLDOWN_MIN = 30            # min gap between signals per (symbol, direction)
+DAY_STOP_SL = 2              # stop emitting after this many confirmed SLs today
+#   (re-measured Sep-2026 under direction-keyed cooldown: drops ZERO backtest
+#   trades on 30d & 60d — pure disaster insurance. Under the old rule-keyed
+#   cooldown the same stop cost 58% of profit; the clustered re-entries the
+#   cooldown fix removed were exactly what used to trip it.)
 DELTA_LO, DELTA_HI = 0.40, 0.60  # scalp strike: fast-moving near-ATM delta
 RSI_LEN = 14
 # Quality filters (60d fit/validation tested — improved BOTH halves; apply only
@@ -444,6 +449,10 @@ async def scalp_sweep() -> int:
     emitted = 0
     symbols = sorted({sym for _, cfg in users
                       for sym in (cfg.get("scalp_symbols") or ["NIFTY"])})
+    # Phase 1 — bars + rule hits per symbol (bars kept for the day-stop check)
+    bars_map: dict[str, list[dict]] = {}
+    hits_map: dict[str, list[dict]] = {}
+    snap_map: dict[str, dict] = {}
     for symbol in symbols:
         try:
             now = time.time()
@@ -457,18 +466,34 @@ async def scalp_sweep() -> int:
             if not bars:
                 log.info("Scalp: no usable session bars for %s (holiday/stale feed?)", symbol)
                 continue
+            bars_map[symbol] = bars
             snapshot = await get_fno_snapshot(symbol)
+            snap_map[symbol] = snapshot
             walls = {"resistance": (snapshot.get("resistance_strikes") or [{}])[0].get("strike"),
                      "support": (snapshot.get("support_strikes") or [{}])[0].get("strike")}
-            hits = evaluate_rules(bars, walls)
+            hits_map[symbol] = evaluate_rules(bars, walls)
         except Exception as exc:  # noqa: BLE001
             log.info("Scalp data unavailable for %s: %s", symbol, exc)
             continue
-        if not hits:
+    if not any(hits_map.values()):
+        return 0
+    # Phase 2 — per-user emit, behind the 2-SL day stop (measured Sep-2026:
+    # with direction-keyed cooldown it costs ZERO backtest profit — the stop
+    # only ever triggers on disaster days it exists to cap)
+    from .paper_score import live_day_sl_count
+
+    for user_id, cfg in users:
+        try:
+            sl_today = await asyncio.to_thread(live_day_sl_count, user_id, bars_map)
+        except Exception:  # noqa: BLE001 — a scoring hiccup must not mute signals
+            sl_today = 0
+        if sl_today >= DAY_STOP_SL:
+            log.info("Scalp day stop for user %s: %s SLs today — no new signals", user_id, sl_today)
             continue
-        for user_id, cfg in users:
-            if symbol not in (cfg.get("scalp_symbols") or ["NIFTY"]):
+        for symbol, hits in hits_map.items():
+            if not hits or symbol not in (cfg.get("scalp_symbols") or ["NIFTY"]):
                 continue
+            snapshot = snap_map[symbol]
             # R5: keep blocking DB work off the event loop
             bias = await asyncio.to_thread(day_bias, user_id, symbol)
             for hit in hits:
