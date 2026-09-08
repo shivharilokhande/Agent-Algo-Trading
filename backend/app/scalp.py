@@ -228,7 +228,8 @@ def build_scalp_signal(symbol: str, rule_hit: dict, snapshot: dict,
     swing_risk = float(settings_cfg.get("risk_per_trade_pct") or DEFAULT_RISK_PCT)
     scalp_risk = float(settings_cfg.get("scalp_risk_pct") or swing_risk * DEFAULT_SCALP_RISK_FRACTION)
     # hard safety clamp: a typo like "50" must never size 50%-risk scalps
-    scalp_risk = max(0.1, min(scalp_risk, 5.0))
+    # (ceiling raised 5 → 10 at user request for the ₹1L @ 7.5% paper month)
+    scalp_risk = max(0.1, min(scalp_risk, 10.0))
     lot = (settings_cfg.get("fno_lot_sizes") or {}).get(symbol) or DEFAULT_LOT_SIZES.get(symbol)
     sizing = size_position(ep, sl, lot, capital, scalp_risk)
     if sizing.get("lots"):

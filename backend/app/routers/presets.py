@@ -116,7 +116,7 @@ def put_settings(
     scalp checkbox erasing trading_capital). Send a key with value null to
     delete that key.
     """
-    _RANGES = {"scalp_risk_pct": (0.1, 5.0), "risk_per_trade_pct": (0.1, 10.0),
+    _RANGES = {"scalp_risk_pct": (0.1, 10.0), "risk_per_trade_pct": (0.1, 10.0),
                "trading_capital": (10_000, 1_000_000_000),
                "paper_capital": (10_000, 1_000_000_000),
                "paper_risk_pct": (0.1, 10.0)}

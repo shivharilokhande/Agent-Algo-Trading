@@ -156,16 +156,16 @@ export default function Scalp() {
           </label>
           <label>
             Scalp risk %/trade{" "}
-            <input type="number" step="0.1" min="0.1" max="5" style={{ width: 70 }}
+            <input type="number" step="0.1" min="0.1" max="10" style={{ width: 70 }}
               key={cfg?.scalp_risk_pct ?? "unset"}
               defaultValue={cfg?.scalp_risk_pct ?? ""}
               placeholder="½ of swing" disabled={ctlDisabled}
               onBlur={(e) => {
                 const v = Number(e.target.value);
-                if (e.target.value && Number.isFinite(v) && v >= 0.1 && v <= 5) {
+                if (e.target.value && Number.isFinite(v) && v >= 0.1 && v <= 10) {
                   saveCfg({ scalp_risk_pct: v });
                 } else if (e.target.value) {
-                  setErr("Scalp risk must be between 0.1% and 5% — a typo here sizes real lots.");
+                  setErr("Scalp risk must be between 0.1% and 10% — a typo here sizes real lots.");
                 }
               }} />
           </label>
