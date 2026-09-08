@@ -353,6 +353,39 @@ def clear_simulated_signals(
     db.commit()
 
 
+@router.get("/scalp/paper")
+def scalp_paper(
+    user: Annotated[User, Depends(get_current_user)],
+    days: int = 14,
+):
+    """Paper-week scoreboard: real signals scored on actual candles."""
+    from ..paper_score import paper_summary
+
+    if not 1 <= days <= 60:
+        raise HTTPException(status_code=422, detail="days must be 1–60")
+    return paper_summary(user.id, days)
+
+
+@router.post("/scalp/paper/score")
+async def scalp_paper_score(
+    user: Annotated[User, Depends(get_current_user)],
+    day: str | None = None,
+):
+    """Score now (default: today IST). Idempotent — already-scored rows skip."""
+    import asyncio
+    from datetime import date
+
+    from ..paper_score import paper_summary, score_day
+
+    if day is not None:
+        try:
+            date.fromisoformat(day)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="day must be YYYY-MM-DD") from None
+    scored = await asyncio.to_thread(score_day, day, user.id)
+    return {"scored": scored, "summary": paper_summary(user.id, 14)}
+
+
 @router.get("/scalp/status")
 async def scalp_status(
     user: Annotated[User, Depends(get_current_user)],

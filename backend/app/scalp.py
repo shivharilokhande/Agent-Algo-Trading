@@ -491,4 +491,10 @@ async def scalp_loop() -> None:
                 log.info("Scalp sweep emitted %s signal(s)", n)
         except Exception:  # pragma: no cover
             log.exception("Scalp sweep failed")
+        try:  # paper-week scoreboard: score today's real signals after the close
+            from .paper_score import maybe_score_after_close
+
+            await maybe_score_after_close()
+        except Exception:  # pragma: no cover
+            log.exception("Paper scoring hook failed")
         await asyncio.sleep(SCALP_POLL_SECONDS)

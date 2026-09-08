@@ -88,6 +88,20 @@ export default function Scalp() {
   const btInputsOk = Number.isFinite(btCapital) && btCapital >= 10000
     && Number.isFinite(btRisk) && btRisk >= 0.1 && btRisk <= 10;
 
+  // Paper-week scoreboard: real signals scored on actual candles after close
+  const [paper, setPaper] = useState<any>(null);
+  const [paperBusy, setPaperBusy] = useState(false);
+  useEffect(() => {
+    api.get<any>("/api/scalp/paper?days=14").then(setPaper).catch(() => {});
+  }, []);
+  async function scoreNow() {
+    setPaperBusy(true); setErr("");
+    try {
+      const res = await api.post<any>("/api/scalp/paper/score");
+      setPaper(res.summary);
+    } catch (ex: any) { setErr(ex.message); } finally { setPaperBusy(false); }
+  }
+
   async function runBacktest() {
     setBtBusy(true); setErr(""); setBt(null);
     try {
@@ -220,6 +234,60 @@ export default function Scalp() {
           Scalping long options is theta-negative and fast — take only signals aligned with your own
           read, honour the stop and the time stop. Signals also arrive as Mac notifications.
           Research, not advice.
+        </p>
+      </div>
+
+      <div className="card">
+        <h3>Paper week <span className="muted">— the go-live gate: real signals scored on actual candles</span></h3>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          {paper?.total?.n ? (
+            <>
+              <span><b>{paper.total.win_pct}%</b> profitable ({paper.total.wins}/{paper.total.n})</span>
+              <span>net <b style={{ color: paper.total.sum_r >= 0 ? "var(--green)" : "var(--red)" }}>
+                {paper.total.sum_r >= 0 ? "+" : ""}{paper.total.sum_r}R</b></span>
+              <span className="muted">expectancy {paper.total.expectancy_r}R/trade</span>
+              {paper.wall_reject && (
+                <span className="muted">
+                  WALL_REJECT alone: {paper.wall_reject.wins}/{paper.wall_reject.n}
+                  {" "}({paper.wall_reject.sum_r >= 0 ? "+" : ""}{paper.wall_reject.sum_r}R) — unaudited rule, judge here
+                </span>
+              )}
+            </>
+          ) : <span className="muted">No scored signals yet — scoring runs automatically after 15:35 IST each trading day.</span>}
+          <button className="secondary" onClick={scoreNow} disabled={paperBusy}>
+            {paperBusy ? "Scoring…" : "Score today now"}
+          </button>
+          {paper?.unscored ? <span className="muted">{paper.unscored} not yet scored</span> : null}
+        </div>
+        {paper?.days?.length > 0 && (
+          <table style={{ marginTop: 10 }}>
+            <thead><tr><th>Day</th><th>Signals</th><th>Profitable</th><th>Net R</th><th>Detail</th></tr></thead>
+            <tbody>
+              {paper.days.map((d: any) => (
+                <tr key={d.day}>
+                  <td className="mono">{d.day}</td>
+                  <td>{d.n}</td>
+                  <td>{d.wins} ({d.n ? Math.round((d.wins / d.n) * 100) : 0}%)</td>
+                  <td className="mono" style={{ color: d.sum_r >= 0 ? "var(--green)" : "var(--red)" }}>
+                    {d.sum_r >= 0 ? "+" : ""}{d.sum_r}R
+                  </td>
+                  <td className="muted" style={{ fontSize: 11, maxWidth: 420 }}>
+                    {d.signals.map((s: any, i: number) => (
+                      <span key={i} style={{ marginRight: 10, whiteSpace: "nowrap" }}>
+                        {s.time} {s.symbol} {s.rule} → <b style={{ color: s.r > 0 ? "var(--green)" : s.r < 0 ? "var(--red)" : undefined }}>
+                          {s.outcome} {s.r >= 0 ? "+" : ""}{s.r}R</b>
+                      </span>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="disclaimer" style={{ padding: 0, marginTop: 8 }}>
+          Each real signal is replayed after the close against the session's actual 1-minute candles
+          under exit policy A, from its real quoted entry premium. When a full week here matches the
+          backtest's expectancy, the one-tap execution gate opens.
         </p>
       </div>
 
