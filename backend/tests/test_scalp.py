@@ -145,6 +145,8 @@ def test_pick_strike_and_build_signal():
     assert "exit_policy" not in sig_a
 
 
+
+
 def test_scalp_api_and_dedupe(client, auth):
     from app.db import SessionLocal
     from app.models import User

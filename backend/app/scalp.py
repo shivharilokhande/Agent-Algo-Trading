@@ -36,6 +36,11 @@ SCALP_TIME_STOP_MIN = 20     # exit if nothing happened in 20 minutes
 G_FLOOR_R = 1.2
 G_TRAIL_R = 0.3
 G_HARD_CAP_MIN = 45
+# NOTE (Sep-2026): a cost-aware filter (skip when charges > 10% of risk) was
+# built and backtested here — REJECTED: it blocked exactly the cheap-premium
+# small-size trades that carry the historical edge (₹50K@1.5%: 26/26 blocked;
+# all other configs: fewer trades, worse P&L). Charges are a drag, not a
+# trade-quality signal. Kept as a note so the idea isn't re-tried blindly.
 THETA_CUTOFF = (14, 30)      # no new long-premium signals after 14:30 IST
 OPENING_RANGE_MIN = 15       # ORB window: 09:15–09:30
 COOLDOWN_MIN = 30            # min gap between signals per (symbol, rule)
@@ -298,12 +303,38 @@ def day_bias(user_id: str, symbol: str, with_age: bool = False):
 
 # --- signal persistence + notification ------------------------------------------
 
-def _notify_mac(title: str, message: str) -> None:
-    """macOS desktop notification (best effort — backend runs on the user's Mac)."""
+def _notify_telegram(title: str, message: str) -> bool:
+    """Push to Telegram when AGENTALGO_TELEGRAM_BOT_TOKEN/_CHAT_ID are set —
+    the server-mode (and anywhere-mode) alert channel. Returns True if sent."""
     import os
+
+    token = os.environ.get("AGENTALGO_TELEGRAM_BOT_TOKEN")
+    chat = os.environ.get("AGENTALGO_TELEGRAM_CHAT_ID")
+    if not token or not chat:
+        return False
+    try:
+        import httpx
+
+        httpx.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                   json={"chat_id": chat, "text": f"🔔 {title}\n{message}"},
+                   timeout=8)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _notify_mac(title: str, message: str) -> None:
+    """Signal alert: Telegram first (works on servers and reaches your phone);
+    macOS notification as the local fallback."""
+    import os
+    import platform
 
     if os.environ.get("AGENTALGO_DISABLE_NOTIFY"):
         return  # tests emit 'real' signals into an isolated DB — never notify
+    if _notify_telegram(title, message):
+        return
+    if platform.system() != "Darwin":
+        return  # Linux server without Telegram configured: bell/API only
     try:
         script = f'display notification "{message}" with title "{title}" sound name "Glass"'
         # R5: fire-and-forget — a blocking run(timeout=5) could stall the event loop
