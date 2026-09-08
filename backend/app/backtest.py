@@ -290,9 +290,9 @@ def backtest_combined(days: int = 7, capital: float = 100_000.0,
                     break
                 for hit in evaluate_rules(bars[: i + 1]):
                     m = bars[i]["hm"][0] * 60 + bars[i]["hm"][1]
-                    if m - last.get(hit["rule"], -10_000) < COOLDOWN_MIN:
+                    if m - last.get(hit["direction"], -10_000) < COOLDOWN_MIN:
                         continue
-                    last[hit["rule"]] = m
+                    last[hit["direction"]] = m
                     spot0 = bars[i]["c"]
                     ep = model_premium(spot0, day, sym, vix.get(day))
                     sim = (_simulate_trade(bars, i, hit["direction"], ep)
@@ -402,9 +402,9 @@ def compare_exit_policies(symbol: str, days: int = 7) -> dict:
             if bars[i]["hm"] >= THETA_CUTOFF:
                 break
             for hit in evaluate_rules(bars[: i + 1]):
-                if i - last_fire.get(hit["rule"], -10_000) < COOLDOWN_MIN:
+                if i - last_fire.get(hit["direction"], -10_000) < COOLDOWN_MIN:
                     continue
-                last_fire[hit["rule"]] = i
+                last_fire[hit["direction"]] = i
                 signals.append((bars, i, hit["direction"], hit["rule"], day))
     policies = {"A_fixed_20m": "A", "B_trail": "B", "C_hybrid": "C",
                 "E_extend_floor": "E", "F_extend_ratchet": "F",
@@ -458,7 +458,7 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
         return hm[0] * 60 + hm[1]
 
     for day, bars in sessions.items():
-        last_fire: dict[str, int] = {}  # rule -> minutes-of-day (cooldown)
+        last_fire: dict[str, int] = {}  # direction -> minutes-of-day (cooldown)
         open_trades: list[dict] = []    # [{exit_i, pnl, outlay, rec}]
         open_outlay = 0.0
 
@@ -482,9 +482,9 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
             _settle_until(i)  # realize anything that exited before this bar
             for hit in hits:
                 now_min = _mins(bars[i]["hm"])
-                if now_min - last_fire.get(hit["rule"], -10_000) < COOLDOWN_MIN:
+                if now_min - last_fire.get(hit["direction"], -10_000) < COOLDOWN_MIN:
                     continue
-                last_fire[hit["rule"]] = now_min
+                last_fire[hit["direction"]] = now_min
                 spot0 = bars[i]["c"]
                 ep = model_premium(spot0, day, symbol, vix.get(day))
                 sim = (_simulate_trade(bars, i, hit["direction"], ep)

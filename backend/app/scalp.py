@@ -10,7 +10,7 @@ Rules (long-premium only):
   WALL_REJECT  — spot rejects a heavy OI wall (fade back toward VWAP)
 
 Safety rails: bias filter from the day's latest engine run, theta cutoff (no new
-long-premium signals after 14:30 IST), per-rule cooldown, one-shot dedupe.
+long-premium signals after 14:30 IST), per-direction cooldown, one-shot dedupe.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ G_HARD_CAP_MIN = 45
 # trade-quality signal. Kept as a note so the idea isn't re-tried blindly.
 THETA_CUTOFF = (14, 30)      # no new long-premium signals after 14:30 IST
 OPENING_RANGE_MIN = 15       # ORB window: 09:15–09:30
-COOLDOWN_MIN = 30            # min gap between signals per (symbol, rule)
+COOLDOWN_MIN = 30            # min gap between signals per (symbol, direction)
 DELTA_LO, DELTA_HI = 0.40, 0.60  # scalp strike: fast-moving near-ATM delta
 RSI_LEN = 14
 # Quality filters (60d fit/validation tested — improved BOTH halves; apply only
@@ -354,10 +354,15 @@ def emit_signal(user_id: str, sig: dict, simulated: bool = False) -> str | None:
 
         cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=COOLDOWN_MIN)
         # R5-3: simulated and real signals keep SEPARATE cooldowns — a test
-        # signal must never suppress (or be suppressed by) a real one
+        # signal must never suppress (or be suppressed by) a real one.
+        # Cooldown key = (symbol, DIRECTION), not rule: different rules re-firing
+        # into the same falling idea stacked SLs on one move (seen live 08-Sep:
+        # 3 SLs on NIFTY 23650 PE). Direction-keyed improved BOTH 30d and 60d
+        # backtests (e.g. 1L@1.5%/60d +₹5.4K → +₹8.5K) by removing only those
+        # clustered re-entries.
         dup = (db.query(ScalpSignal)
                .filter(ScalpSignal.user_id == user_id, ScalpSignal.symbol == sig["symbol"],
-                       ScalpSignal.rule == sig["rule"],
+                       ScalpSignal.direction == sig["direction"],
                        ScalpSignal.simulated.is_(simulated),
                        ScalpSignal.created_at >= cutoff)
                .first())
