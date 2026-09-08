@@ -314,6 +314,47 @@ class ScalpSignal(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ScalpPaperTrade(Base):
+    """Live paper trade — one row per real scalp signal, resolved on real quotes.
+
+    Portfolio semantics mirror the COMBINED backtest: one paper account
+    (base = the trading_capital setting), equity compounds on close, at most
+    MAX_CONCURRENT open, unaffordable signals skipped. Exits prefer the real
+    Kite bid at the moment SL/TP/time-stop triggers; falls back to the modeled
+    spot-replay price when the broker session is down (exit_source says which).
+    """
+
+    __tablename__ = "scalp_paper_trades"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    signal_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    day: Mapped[str] = mapped_column(String(10), index=True)      # IST date
+    symbol: Mapped[str] = mapped_column(String(24))
+    rule: Mapped[str] = mapped_column(String(24))
+    direction: Mapped[str] = mapped_column(String(4))
+    instrument: Mapped[str] = mapped_column(String(48))
+    expiry: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    spot_entry: Mapped[float | None] = mapped_column(Float, nullable=True)
+    delta: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_p: Mapped[float] = mapped_column(Float)                 # real quoted premium
+    sl: Mapped[float] = mapped_column(Float)
+    tp: Mapped[float] = mapped_column(Float)
+    lot_size: Mapped[int] = mapped_column(Integer)
+    lots: Mapped[int] = mapped_column(Integer)
+    capital_used: Mapped[float] = mapped_column(Float)            # ep × lot × lots
+    status: Mapped[str] = mapped_column(String(8), default="open", index=True)  # open|closed
+    exit_p: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    exit_source: Mapped[str | None] = mapped_column(String(8), nullable=True)   # kite|modeled
+    outcome: Mapped[str | None] = mapped_column(String(8), nullable=True)       # SL|TP|TIME
+    r_multiple: Mapped[float | None] = mapped_column(Float, nullable=True)
+    charges: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pnl: Mapped[float | None] = mapped_column(Float, nullable=True)             # net, after charges
+    equity_after: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AgentCall(Base):
     """Borrow #2 — one agent's directional proposal in one run, graded on resolution."""
 

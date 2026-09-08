@@ -117,7 +117,9 @@ def put_settings(
     delete that key.
     """
     _RANGES = {"scalp_risk_pct": (0.1, 5.0), "risk_per_trade_pct": (0.1, 10.0),
-               "trading_capital": (10_000, 1_000_000_000)}
+               "trading_capital": (10_000, 1_000_000_000),
+               "paper_capital": (10_000, 1_000_000_000),
+               "paper_risk_pct": (0.1, 10.0)}
     for key, value in body.config.items():
         expected = _SETTING_VALIDATORS.get(key)
         if expected is None:

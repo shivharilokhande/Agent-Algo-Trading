@@ -521,8 +521,16 @@ async def scalp_sweep() -> int:
                             refine_signal_with_kite, sig, snapshot.get("expiry"))
                     except Exception:  # noqa: BLE001
                         pass
-                    if await asyncio.to_thread(emit_signal, user_id, sig):
+                    rid = await asyncio.to_thread(emit_signal, user_id, sig)
+                    if rid:
                         emitted += 1
+                        try:  # auto-open the live paper trade (portfolio account)
+                            from .paper_trade import open_paper_trade
+
+                            await asyncio.to_thread(open_paper_trade, user_id, sig,
+                                                    rid, snapshot.get("expiry"), cfg)
+                        except Exception:  # noqa: BLE001
+                            log.exception("Paper trade open failed")
     return emitted
 
 

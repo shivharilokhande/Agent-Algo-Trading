@@ -410,6 +410,19 @@ async def scalp_paper_score(
     return {"scored": scored, "summary": paper_summary(user.id, 14)}
 
 
+@router.get("/scalp/paper-trades")
+def scalp_paper_trades(
+    user: Annotated[User, Depends(get_current_user)],
+    days: int = 35,
+):
+    """Live paper-trading desk: backtest-style rows + portfolio summary."""
+    from ..paper_trade import paper_trades_summary
+
+    if not 1 <= days <= 90:
+        raise HTTPException(status_code=422, detail="days must be 1–90")
+    return paper_trades_summary(user.id, days)
+
+
 @router.get("/scalp/status")
 async def scalp_status(
     user: Annotated[User, Depends(get_current_user)],
