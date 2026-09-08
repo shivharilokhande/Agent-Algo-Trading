@@ -44,7 +44,7 @@ G_HARD_CAP_MIN = 45
 THETA_CUTOFF = (14, 30)      # no new long-premium signals after 14:30 IST
 OPENING_RANGE_MIN = 15       # ORB window: 09:15–09:30
 COOLDOWN_MIN = 30            # min gap between signals per (symbol, direction)
-DAY_STOP_SL = 2              # stop emitting after this many confirmed SLs today
+DAY_STOP_SL = 3              # stop emitting after this many confirmed SLs today (user: max 3)
 #   (re-measured Sep-2026 under direction-keyed cooldown: drops ZERO backtest
 #   trades on 30d & 60d — pure disaster insurance. Under the old rule-keyed
 #   cooldown the same stop cost 58% of profit; the clustered re-entries the
