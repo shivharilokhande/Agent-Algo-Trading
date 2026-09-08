@@ -75,6 +75,16 @@ def fetch_vix_map(days: int = 12) -> dict[str, float]:
         return {}
 
 
+def vix_before(vix: dict[str, float], day_iso: str) -> float | None:
+    """Latest VIX close STRICTLY before the session — the value knowable at entry.
+
+    R6-4: pricing a 10:00 entry with the same day's 15:30 VIX close was a mild
+    look-ahead (it changes ep, hence which candles touch SL/TP, hence sizing).
+    """
+    prior = [d for d in vix if d < day_iso]
+    return vix[max(prior)] if prior else None
+
+
 def model_premium(spot: float, day_iso: str, symbol: str,
                   iv: float | None = None) -> float:
     """ATM premium via Brenner–Subrahmanyam: 0.4 · S · σ · √T to the nearest expiry.
@@ -150,14 +160,19 @@ def fetch_history_sessions(symbol: str, days: int = 7) -> dict[str, list[dict]]:
     return dict(sorted(sessions.items())[-days:])
 
 
-def _simulate_trade(bars: list[dict], i: int, direction: str, p0: float) -> dict:
-    """Simulate one trade entered at bar i's close. Returns outcome + R multiple."""
+def _simulate_trade(bars: list[dict], i: int, direction: str, p0: float,
+                    delta: float | None = None) -> dict:
+    """Simulate one trade entered at bar i's close. Returns outcome + R multiple.
+
+    `delta` lets the paper scorer use the signal's REAL delta (0.40–0.60)
+    instead of the modeled ATM 0.5 (R6-5)."""
+    d = abs(delta) if delta else ASSUMED_DELTA
     spot0 = bars[i]["c"]
     risk = round(p0 * SCALP_SL_PCT / 100, 2)
     sign = 1.0 if direction == "CE" else -1.0
     # premium touch levels translated to spot moves: Δp = delta × Δspot(signed)
-    sl_move = risk / ASSUMED_DELTA          # adverse spot move that hits SL
-    tp_move = risk * SCALP_RR / ASSUMED_DELTA
+    sl_move = risk / d          # adverse spot move that hits SL
+    tp_move = risk * SCALP_RR / d
     end = min(i + SCALP_TIME_STOP_MIN, len(bars) - 1)
     for j in range(i + 1, end + 1):
         fav = sign * (bars[j]["h"] if direction == "CE" else bars[j]["l"]) - sign * spot0
@@ -168,7 +183,7 @@ def _simulate_trade(bars: list[dict], i: int, direction: str, p0: float) -> dict
         if hit_tp:
             return {"outcome": "TP", "r": SCALP_RR, "exit_t": bars[j]["t"], "bars_held": j - i}
     # time stop: mark at close of the last bar
-    dp = sign * (bars[end]["c"] - spot0) * ASSUMED_DELTA
+    dp = sign * (bars[end]["c"] - spot0) * d
     return {"outcome": "TIME", "r": round(dp / risk, 2), "exit_t": bars[end]["t"],
             "bars_held": end - i}
 
@@ -294,12 +309,16 @@ def backtest_combined(days: int = 7, capital: float = 100_000.0,
                         continue
                     last[hit["direction"]] = m
                     spot0 = bars[i]["c"]
-                    ep = model_premium(spot0, day, sym, vix.get(day))
+                    ep = model_premium(spot0, day, sym, vix_before(vix, day))
                     sim = (_simulate_trade(bars, i, hit["direction"], ep)
                            if exit_policy == "A"
                            else _simulate_policy(bars, i, hit["direction"], "G", ep))
                     cands.append({
-                        "day": day, "em": m, "xm": m + sim["bars_held"], "sym": sym,
+                        "day": day, "em": m,
+                        # R6-7: exit minute from the exit bar's clock — with
+                        # missing 1m bars, em + bars_held understates it
+                        "xm": (lambda hm: hm[0] * 60 + hm[1])(bars[i + sim["bars_held"]]["hm"]),
+                        "sym": sym,
                         "time": bars[i]["t"][11:16], "rule": hit["rule"],
                         "direction": hit["direction"], "spot": round(spot0, 1),
                         "instrument": atm_instrument(sym, spot0, hit["direction"]),
@@ -402,9 +421,10 @@ def compare_exit_policies(symbol: str, days: int = 7) -> dict:
             if bars[i]["hm"] >= THETA_CUTOFF:
                 break
             for hit in evaluate_rules(bars[: i + 1]):
-                if i - last_fire.get(hit["direction"], -10_000) < COOLDOWN_MIN:
+                now_min = bars[i]["hm"][0] * 60 + bars[i]["hm"][1]  # R6-8: timestamp cooldown
+                if now_min - last_fire.get(hit["direction"], -10_000) < COOLDOWN_MIN:
                     continue
-                last_fire[hit["direction"]] = i
+                last_fire[hit["direction"]] = now_min
                 signals.append((bars, i, hit["direction"], hit["rule"], day))
     policies = {"A_fixed_20m": "A", "B_trail": "B", "C_hybrid": "C",
                 "E_extend_floor": "E", "F_extend_ratchet": "F",
@@ -412,7 +432,7 @@ def compare_exit_policies(symbol: str, days: int = 7) -> dict:
     out: dict = {"symbol": symbol, "sessions": list(sessions.keys()),
                  "n_signals": len(signals), "policies": {}}
     for name, p in policies.items():
-        rs = [_simulate_policy(bars, i, d, p, model_premium(bars[i]["c"], day, symbol, vix.get(day)))
+        rs = [_simulate_policy(bars, i, d, p, model_premium(bars[i]["c"], day, symbol, vix_before(vix, day)))
               for bars, i, d, _, day in signals]
         total = round(sum(x["r"] for x in rs), 2)
         winners = [x["r"] for x in rs if x["r"] > 0.05]
@@ -486,7 +506,7 @@ def backtest_symbol(symbol: str, days: int = 7, capital: float = 100_000.0,
                     continue
                 last_fire[hit["direction"]] = now_min
                 spot0 = bars[i]["c"]
-                ep = model_premium(spot0, day, symbol, vix.get(day))
+                ep = model_premium(spot0, day, symbol, vix_before(vix, day))
                 sim = (_simulate_trade(bars, i, hit["direction"], ep)
                        if exit_policy == "A"
                        else _simulate_policy(bars, i, hit["direction"], "G", ep))

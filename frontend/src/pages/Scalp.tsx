@@ -24,15 +24,25 @@ export default function Scalp() {
   const [cfg, setCfg] = useState<any>(null); // null until first load (R5: gate controls)
   const [busy, setBusy] = useState(false);
   const savingRef = useRef(false);
+  const cfgEpoch = useRef(0); // R6-F1: bumped by every save — stale polls discard
   const [err, setErr] = useState("");
+  // Paper-week scoreboard: real signals scored on actual candles after close
+  const [paper, setPaper] = useState<any>(null);
+  const [paperBusy, setPaperBusy] = useState(false);
 
   async function load() {
+    const epoch = cfgEpoch.current; // config generation this poll belongs to
     try {
       setStatus(await api.get<Status>("/api/scalp/status"));
       setSignals(await api.get<Signal[]>("/api/scalp/signals"));
+      try {  // paper card refreshes with the poll (R6-F2) — its errors don't banner
+        setPaper(await api.get<any>("/api/scalp/paper?days=14"));
+      } catch { /* transient — next poll retries */ }
       const s = await api.get<any>("/api/settings");
-      // R5: never let the background poll clobber an in-flight save
-      if (!savingRef.current) setCfg(s.config || {});
+      // R6-F1: a GET issued before a save (or resolving during one) must never
+      // clobber cfg — the old savingRef check raced when the GET was already
+      // in flight as the save started and landed after it finished
+      if (!savingRef.current && epoch === cfgEpoch.current) setCfg(s.config || {});
       setErr("");  // clear a stale banner once a poll succeeds
     } catch (ex: any) { setErr(ex.message); }
   }
@@ -44,7 +54,7 @@ export default function Scalp() {
   }, []);
 
   async function saveCfg(patch: any) {
-    setBusy(true); savingRef.current = true; setErr("");
+    setBusy(true); savingRef.current = true; cfgEpoch.current++; setErr("");
     try {
       // R5-1: server merges now — send ONLY the patch, never the whole state
       const res = await api.put<any>("/api/settings", { config: patch });
@@ -88,12 +98,6 @@ export default function Scalp() {
   const btInputsOk = Number.isFinite(btCapital) && btCapital >= 10000
     && Number.isFinite(btRisk) && btRisk >= 0.1 && btRisk <= 10;
 
-  // Paper-week scoreboard: real signals scored on actual candles after close
-  const [paper, setPaper] = useState<any>(null);
-  const [paperBusy, setPaperBusy] = useState(false);
-  useEffect(() => {
-    api.get<any>("/api/scalp/paper?days=14").then(setPaper).catch(() => {});
-  }, []);
   async function scoreNow() {
     setPaperBusy(true); setErr("");
     try {

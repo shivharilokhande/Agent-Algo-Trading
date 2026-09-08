@@ -296,12 +296,17 @@ def day_bias(user_id: str, symbol: str, with_age: bool = False):
                .filter(Run.user_id == user_id, Run.ticker == ticker,
                        Run.mode == "engine", Run.status == "done")
                .order_by(Run.finished_at.desc()).first())
-        is_today = bool(run and run.finished_at
-                        and run.finished_at.date() == datetime.now(IST).date())
+        # R6-6: finished_at is naive UTC — convert to IST before comparing dates,
+        # else runs finishing 00:00–05:30 IST are misclassified as yesterday's
+        from datetime import timezone as _tz
+
+        fin_ist = (run.finished_at.replace(tzinfo=_tz.utc).astimezone(IST)
+                   if run and run.finished_at else None)
+        is_today = bool(fin_ist and fin_ist.date() == datetime.now(IST).date())
         rating = run.rating if (run and is_today) else None
         if with_age:
             return {"rating": run.rating if run else None,
-                    "as_of": run.finished_at.date().isoformat() if run and run.finished_at else None,
+                    "as_of": fin_ist.date().isoformat() if fin_ist else None,
                     "today": is_today}
         return rating
 
@@ -461,6 +466,14 @@ async def scalp_sweep() -> int:
                 bars = cached[1]
             else:
                 bars = await asyncio.to_thread(fetch_session_bars, symbol)
+                # R6-2: never CACHE a forming bar — the fetch captures the
+                # current minute's partial OHLC, and a later sweep in the next
+                # minute would treat it as completed (usable_session_bars only
+                # drops the bar matching the CURRENT minute). Strip at source.
+                fm = datetime.now(IST)
+                bars = [b for b in bars
+                        if datetime.fromisoformat(b["t"]).replace(second=0, microsecond=0)
+                        < fm.replace(second=0, microsecond=0, tzinfo=fm.tzinfo)]
                 _last_bars_fetch[symbol] = (now, bars)
             bars = usable_session_bars(bars, datetime.now(IST))
             if not bars:

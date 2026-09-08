@@ -284,6 +284,13 @@ def refine_signal_with_kite(sig: dict, expiry_str: str) -> dict:
         "quote_source": "kite", "bid": q.get("bid"), "ask": q.get("ask"),
         "instrument": f"{sig['symbol']} {int(sig['strike'])} {sig['direction']}",
     })
+    # R6-3: the ride plan (policy G) and profit projection were computed from
+    # the free-feed premium — recompute everything premium-derived from ep
+    if sig.get("exit_policy") == "G":
+        from .scalp import G_FLOOR_R, G_TRAIL_R
+
+        sig["ride_floor"] = round(ep + G_FLOOR_R * risk, 2)
+        sig["trail_gap"] = round(G_TRAIL_R * risk, 2)
     # re-size on the broker premium using the same capital basis
     if old_sizing.get("capital"):
         from .fno import DEFAULT_LOT_SIZES, size_position
@@ -291,4 +298,6 @@ def refine_signal_with_kite(sig: dict, expiry_str: str) -> dict:
         lot = old_sizing.get("lot_size") or DEFAULT_LOT_SIZES.get(sig["symbol"])
         sig["sizing"] = size_position(ep, sig["sl"], lot,
                                       old_sizing["capital"], old_sizing["risk_pct"])
+        if sig["sizing"].get("lots") and lot:
+            sig["sizing"]["profit_tp"] = round((sig["tp"] - ep) * lot * sig["sizing"]["lots"], 2)
     return sig

@@ -39,11 +39,17 @@ def _bar_hm(b: dict) -> tuple[int, int]:
 
 
 def _bar_index_at(bars: list[dict], created: datetime) -> int | None:
-    """Last completed bar at/just before the signal minute (entry bar)."""
+    """Entry bar: the last COMPLETED bar strictly before the signal minute.
+
+    R6-5: live signals fire off completed bars through minute−1, so the bar
+    labeled with the signal minute is post-signal data — entering on its close
+    (30–60s after emission) and skipping it in the scan hid same-minute SL/TP
+    touches. Strict `<` makes the replay start scanning FROM the signal minute.
+    """
     hm = (created.hour, created.minute)
     idx = None
     for i, b in enumerate(bars):
-        if _bar_hm(b) <= hm:
+        if _bar_hm(b) < hm:
             idx = i
         else:
             break
@@ -61,7 +67,9 @@ def score_signal(payload: dict, direction: str, bars: list[dict],
     ep = float(payload.get("ep") or 0)
     if not ep:
         return None
-    res = _simulate_trade(bars, i, direction, ep)
+    delta = payload.get("delta")  # real strike delta when the ladder had it
+    res = _simulate_trade(bars, i, direction, ep,
+                          delta=float(delta) if delta else None)
     return {"outcome": res["outcome"], "r": res["r"], "exit_t": res["exit_t"],
             "bars_held": res["bars_held"],
             "scored_at": datetime.now(IST).isoformat(timespec="seconds")}
@@ -200,10 +208,24 @@ def live_day_sl_count(user_id: str, bars_by_symbol: dict[str, list[dict]]) -> in
         sigs = [(r, json.loads(r.payload_json or "{}")) for r in rows
                 if _created_ist(r.created_at).date().isoformat() == today]
     count = 0
+    fallback: dict[str, list[dict]] = {}
     for r, p in sigs:
         bars = bars_by_symbol.get(r.symbol) or []
         if not bars:
-            continue
+            # R6-10: don't fail open — a signal on a symbol whose live feed is
+            # stale (or since-disabled) still counts toward the day stop; pull
+            # its bars from the history path once per symbol.
+            if r.symbol not in fallback:
+                try:
+                    from .backtest import fetch_history_sessions
+
+                    fallback[r.symbol] = fetch_history_sessions(r.symbol, 2).get(today, [])
+                except Exception:  # noqa: BLE001
+                    log.warning("Day stop: no bars for %s — its SLs are UNCOUNTED", r.symbol)
+                    fallback[r.symbol] = []
+            bars = fallback[r.symbol]
+            if not bars:
+                continue
         res = score_signal(p, r.direction, bars, _created_ist(r.created_at))
         if res and res["outcome"] == "SL":
             count += 1

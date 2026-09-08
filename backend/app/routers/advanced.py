@@ -279,7 +279,7 @@ async def scalp_backtest(
     days: int = 7,
     capital: float = 100_000.0,
     risk_pct: float = 1.0,
-    brokerage: float = 50.0,
+    brokerage: float = 20.0,  # R6-9: match the calibrated Zerodha flat
     slippage_pct: float = 0.25,
     exit_policy: str = "A",
 ):
@@ -382,6 +382,20 @@ async def scalp_paper_score(
             date.fromisoformat(day)
         except ValueError:
             raise HTTPException(status_code=422, detail="day must be YYYY-MM-DD") from None
+    # R6-1: scores are FINAL (score_day skips already-scored rows), so scoring
+    # today mid-session would freeze partial-day outcomes into the go-live
+    # scoreboard — a TIME marked at 11:00 hides the SL that hits at 11:40.
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from ..paper_score import SCORE_AFTER_HM
+
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    target = day or now_ist.date().isoformat()
+    if target == now_ist.date().isoformat() and (now_ist.hour, now_ist.minute) < SCORE_AFTER_HM:
+        raise HTTPException(status_code=409,
+                            detail="Session not finished — today's signals are scored "
+                                   "after 15:35 IST (partial scores would be final).")
     scored = await asyncio.to_thread(score_day, day, user.id)
     return {"scored": scored, "summary": paper_summary(user.id, 14)}
 

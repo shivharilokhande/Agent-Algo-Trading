@@ -53,11 +53,15 @@ export const api = {
 
 // R5-9: one shared timestamp formatter — backend datetimes are UTC but often
 // serialized WITHOUT a zone suffix; normalize, then always render in IST.
+// R6-F3: any trailing zone designator (Z, +05:30, -05:00) counts as zoned —
+// the old `includes("+")` missed negative offsets and produced invalid dates
+const HAS_ZONE = /([zZ]|[+−-]\d{2}:?\d{2})$/;
+
 export function fmtIst(ts: string | null | undefined,
                        opts: Intl.DateTimeFormatOptions =
                          { dateStyle: "medium", timeStyle: "short" }): string {
   if (!ts) return "—";
-  const iso = ts.endsWith("Z") || ts.includes("+") ? ts : ts + "Z";
+  const iso = HAS_ZONE.test(ts) ? ts : ts + "Z";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return ts;
   return d.toLocaleString("en-IN", { ...opts, timeZone: "Asia/Kolkata" });

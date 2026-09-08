@@ -21,7 +21,7 @@ def test_score_signal_tp_and_sl():
     from app.paper_score import score_signal
 
     day = "2026-09-08"
-    created = datetime(2026, 9, 8, 10, 0, tzinfo=IST)
+    created = datetime(2026, 9, 8, 10, 1, tzinfo=IST)  # enters on the 10:00 bar (strictly before)
     # ep 100 → risk 18 premium ≈ spot move 18/0.5=36 for SL, 54 for TP
     up = _bars(day, [24000 + 15 * i for i in range(10)])   # strong rally → TP
     res = score_signal({"ep": 100.0}, "CE", up, created)
@@ -47,7 +47,7 @@ def test_score_day_and_summary(client, auth, monkeypatch):
     now_ist = datetime.now(IST)
     day = now_ist.date().isoformat()
     # a real signal "created" at 10:00 IST today (stored naive UTC)
-    created_utc = datetime(now_ist.year, now_ist.month, now_ist.day, 10, 0,
+    created_utc = datetime(now_ist.year, now_ist.month, now_ist.day, 10, 1,
                            tzinfo=IST).astimezone(timezone.utc).replace(tzinfo=None)
     with SessionLocal() as db:
         db.add(ScalpSignal(user_id=uid, symbol="NIFTY", rule="WALL_REJECT",
@@ -75,13 +75,20 @@ def test_score_day_and_summary(client, auth, monkeypatch):
     # API surface
     r = client.get("/api/scalp/paper?days=7", headers=auth)
     assert r.status_code == 200 and r.json()["total"]["n"] == 1
+    import app.paper_score as ps
+    monkeypatch.setattr(ps, "SCORE_AFTER_HM", (0, 0))   # "session over" → allowed
     r = client.post("/api/scalp/paper/score", headers=auth)
     assert r.status_code == 200 and r.json()["scored"] == 0
+    monkeypatch.setattr(ps, "SCORE_AFTER_HM", (23, 59))  # mid-session → refused (R6-1)
+    assert client.post("/api/scalp/paper/score", headers=auth).status_code == 409
     assert client.get("/api/scalp/paper?days=99", headers=auth).status_code == 422
 
 
-def test_live_day_sl_count_feeds_day_stop(client, auth):
+def test_live_day_sl_count_feeds_day_stop(client, auth, monkeypatch):
     """2-SL day stop: intraday SL counter on today's REAL signals only."""
+    # R6-10 fallback would hit the network when bars are missing — stub it here
+    monkeypatch.setattr("app.backtest.fetch_history_sessions",
+                        lambda sym, days=8: {})
     from app.db import SessionLocal
     from app.models import ScalpSignal, User
     from app.paper_score import live_day_sl_count
@@ -90,7 +97,7 @@ def test_live_day_sl_count_feeds_day_stop(client, auth):
         uid = db.query(User).filter(User.email == "tester@agentalgo.dev").first().id
         db.query(ScalpSignal).filter(ScalpSignal.user_id == uid).delete()
         now_ist = datetime.now(IST)
-        created_utc = datetime(now_ist.year, now_ist.month, now_ist.day, 10, 0,
+        created_utc = datetime(now_ist.year, now_ist.month, now_ist.day, 10, 1,
                                tzinfo=IST).astimezone(timezone.utc).replace(tzinfo=None)
         for i, sim in enumerate([False, False, True]):  # 2 real + 1 sim
             db.add(ScalpSignal(user_id=uid, symbol="NIFTY", rule="ORB", direction="PE",
