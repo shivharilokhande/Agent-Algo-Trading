@@ -104,7 +104,9 @@ def test_bias_filter_and_theta_cutoff():
     assert bias_allows("CE", "Overweight") and not bias_allows("PE", "Overweight")
     assert bias_allows("PE", "Sell") and bias_allows("CE", "Buy")  # R5-18: was vacuous
     assert bias_allows("CE", "Hold") and bias_allows("PE", None)
-    assert theta_cutoff_passed(datetime(2026, 9, 7, 14, 30, tzinfo=IST))
+    # cutoff moved 14:30 → 15:00 (paper-month day 1, swept + user-approved)
+    assert theta_cutoff_passed(datetime(2026, 9, 7, 15, 0, tzinfo=IST))
+    assert not theta_cutoff_passed(datetime(2026, 9, 7, 14, 30, tzinfo=IST))
     assert not theta_cutoff_passed(datetime(2026, 9, 7, 11, 0, tzinfo=IST))
 
 

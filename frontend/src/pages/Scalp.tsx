@@ -121,7 +121,7 @@ export default function Scalp() {
       <p className="muted">
         Fast lane: rule-based signals (ORB, VWAP reclaim, OI-wall reject) computed every{" "}
         {status?.poll_seconds ?? 45}s from live 1-minute data — filtered by the day's agent bias,
-        theta-aware (no new signals after 14:30 IST), tight brackets with a 20-minute
+        theta-aware (no new signals after 15:00 IST), tight brackets with a 20-minute
         time stop. Research signals only — you place every order yourself.
       </p>
 
@@ -179,7 +179,7 @@ export default function Scalp() {
         {status && (
           <p className="muted" style={{ marginBottom: 0 }}>
             Market {status.market_open ? "OPEN" : "closed"}
-            {status.theta_cutoff && " · past 14:30 theta cutoff — no new signals"}
+            {status.theta_cutoff && " · past 15:00 theta cutoff — no new signals"}
             {" · bias: "}
             {Object.entries(status.bias).map(([s, b]) =>
               !b || !b.rating ? `${s}=none`

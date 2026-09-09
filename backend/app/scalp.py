@@ -10,7 +10,7 @@ Rules (long-premium only):
   WALL_REJECT  — spot rejects a heavy OI wall (fade back toward VWAP)
 
 Safety rails: bias filter from the day's latest engine run, theta cutoff (no new
-long-premium signals after 14:30 IST), per-direction cooldown, one-shot dedupe.
+long-premium signals after 15:00 IST), per-direction cooldown, one-shot dedupe.
 """
 from __future__ import annotations
 
@@ -41,7 +41,13 @@ G_HARD_CAP_MIN = 45
 # small-size trades that carry the historical edge (₹50K@1.5%: 26/26 blocked;
 # all other configs: fewer trades, worse P&L). Charges are a drag, not a
 # trade-quality signal. Kept as a note so the idea isn't re-tried blindly.
-THETA_CUTOFF = (14, 30)      # no new long-premium signals after 14:30 IST
+THETA_CUTOFF = (15, 0)       # no new long-premium signals after 15:00 IST
+#   (14:30 → 15:00 on paper-month day 1, user-approved: the only never-swept
+#   constant. Sweep passed the pre-registered both-windows rule at 1% AND 7.5%
+#   (60d@1%: +7,589 vs +7,074) — CAVEAT: margin partly driven by the 09-Sep
+#   motivating day itself. The paper month now collects out-of-sample evidence
+#   on 14:30–15:00 signals; revert at month-end if they score net-negative.
+#   A 20-min bracket entered 15:00 exits by 15:20, inside the session.)
 OPENING_RANGE_MIN = 15       # ORB window: 09:15–09:30
 COOLDOWN_MIN = 30            # min gap between signals per (symbol, direction)
 DAY_STOP_SL = 3              # stop emitting after this many confirmed SLs today (user: max 3)
