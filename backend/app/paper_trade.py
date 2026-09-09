@@ -24,7 +24,10 @@ IST = ZoneInfo("Asia/Kolkata")
 log = logging.getLogger("agentalgo.paper_trade")
 
 MAX_CONCURRENT = 2          # mirror the COMBINED backtest portfolio
-POLL_SECONDS = 30           # monitor cadence during market hours
+POLL_SECONDS = 10           # monitor cadence during market hours
+#   (30 → 10 on day 1: a PE waterfall crossed the SL between two 30s polls and
+#   filled −1.19R instead of ~−1R. 10s watches like an attentive human; a real
+#   resting SL-M order would still be a touch faster.)
 
 
 def _base_capital(cfg: dict) -> float:
