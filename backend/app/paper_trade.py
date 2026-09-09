@@ -192,7 +192,11 @@ async def paper_trade_sweep() -> int:
             t.status = "closed"
             closed += 1
         if closed:
-            # equity_after: chain in close order for a readable running column
+            # equity_after: chain in close order for a readable running column.
+            # SessionLocal runs autoflush=False — flush the closes first or the
+            # closed-pnl query below reads PRE-close rows (live bug, day 1: the
+            # first trade stored equity_after = base, ignoring its own +₹2.5K).
+            db.flush()
             base_by_user: dict[str, float] = {}
             from .models import Setting
 

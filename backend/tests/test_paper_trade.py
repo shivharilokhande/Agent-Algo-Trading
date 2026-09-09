@@ -95,5 +95,14 @@ async def test_sweep_resolves_on_kite_quote(client, auth, monkeypatch):
         t = db.get(ScalpPaperTrade, tid)
         assert t.status == "closed" and t.outcome == "SL"     # bid 80 ≤ SL 82
         assert t.exit_p == 80.0 and t.exit_source == "kite"
-        assert t.equity_after is not None
+        # regression (live day-1 bug): equity_after must INCLUDE this trade's
+        # own pnl — autoflush=False sessions need an explicit flush first
+        import json as _json
+
+        from app.models import Setting
+        from app.paper_trade import _base_capital
+
+        srow = db.get(Setting, uid)
+        base = _base_capital(_json.loads(srow.config_json or "{}") if srow else {})
+        assert t.equity_after == round(base + t.pnl, 2)
     _uid()
