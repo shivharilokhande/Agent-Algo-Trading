@@ -328,6 +328,13 @@ class ScalpPaperTrade(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    # A = baseline (every signal, go-live evidence); B = shadow portfolio with
+    # the premium run-up gate (skips entries whose option already ran >15% in
+    # the prior 15 min). Same signals, same exits — month-end A/B comparison.
+    account: Mapped[str] = mapped_column(String(1), default="A", index=True)
+    # % the option premium ran (window low → price) in the 15 min before entry;
+    # logged on BOTH accounts when computable, None when Kite couldn't say
+    runup_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     signal_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     day: Mapped[str] = mapped_column(String(10), index=True)      # IST date
     symbol: Mapped[str] = mapped_column(String(24))
@@ -343,7 +350,7 @@ class ScalpPaperTrade(Base):
     lot_size: Mapped[int] = mapped_column(Integer)
     lots: Mapped[int] = mapped_column(Integer)
     capital_used: Mapped[float] = mapped_column(Float)            # ep × lot × lots
-    status: Mapped[str] = mapped_column(String(8), default="open", index=True)  # open|closed
+    status: Mapped[str] = mapped_column(String(8), default="open", index=True)  # open|closed|skipped
     exit_p: Mapped[float | None] = mapped_column(Float, nullable=True)
     exit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     exit_source: Mapped[str | None] = mapped_column(String(8), nullable=True)   # kite|modeled

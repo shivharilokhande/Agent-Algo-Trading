@@ -62,6 +62,9 @@ def _migrate() -> None:
         # P4-A4: full-text index over the research library (SQLite FTS5)
         "CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5("
         "content, title, doc_id UNINDEXED, tokenize='porter')",
+        # Paper Trade B: shadow portfolio + premium run-up logging
+        "ALTER TABLE scalp_paper_trades ADD COLUMN account VARCHAR(1) NOT NULL DEFAULT 'A'",
+        "ALTER TABLE scalp_paper_trades ADD COLUMN runup_pct FLOAT",
     ]
     with engine.begin() as conn:
         for stmt in migrations:

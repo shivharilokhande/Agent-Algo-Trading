@@ -90,7 +90,7 @@ async def test_sweep_resolves_on_kite_quote(client, auth, monkeypatch):
     monkeypatch.setattr("app.kite_data.kite_option_quote",
                         lambda *a, **k: {"bid": 80.0, "ask": 80.4, "last_price": 80.2})
     closed = await paper_trade_sweep()
-    assert closed == 1
+    assert closed == 2  # the A trade + its shadow-B twin (runup unknown → B fail-open)
     with SessionLocal() as db:
         t = db.get(ScalpPaperTrade, tid)
         assert t.status == "closed" and t.outcome == "SL"     # bid 80 ≤ SL 82
@@ -105,4 +105,48 @@ async def test_sweep_resolves_on_kite_quote(client, auth, monkeypatch):
         srow = db.get(Setting, uid)
         base = _base_capital(_json.loads(srow.config_json or "{}") if srow else {})
         assert t.equity_after == round(base + t.pnl, 2)
+    _uid()
+
+
+def test_shadow_b_runup_gate(client, auth, monkeypatch):
+    """Portfolio B: >15% premium run-up → skipped (EXT); calm → B opens too;
+    unknown run-up → fail open. A takes every signal regardless."""
+    from app.db import SessionLocal
+    from app.models import ScalpPaperTrade as T
+    from app.paper_trade import open_paper_trade, paper_trades_summary
+
+    uid = _uid()
+    sig = {**SIG, "strike": 24000}
+
+    # extended: A opens, B records a skipped EXT row
+    monkeypatch.setattr("app.kite_data.kite_option_runup", lambda *a, **k: 21.4)
+    assert open_paper_trade(uid, sig, "sig1", "16-Sep-2026", CFG) is not None
+    with SessionLocal() as db:
+        a = db.query(T).filter(T.user_id == uid, T.account == "A").all()
+        b = db.query(T).filter(T.user_id == uid, T.account == "B").all()
+        assert len(a) == 1 and a[0].status == "open" and a[0].runup_pct == 21.4
+        assert len(b) == 1 and b[0].status == "skipped"
+        assert b[0].outcome == "EXT" and b[0].lots == 0 and b[0].runup_pct == 21.4
+
+    # calm: both open, run-up logged on both
+    monkeypatch.setattr("app.kite_data.kite_option_runup", lambda *a, **k: 4.2)
+    assert open_paper_trade(uid, {**sig, "instrument": "NIFTY 24050 CE",
+                                  "strike": 24050}, "sig2", "16-Sep-2026", CFG)
+    with SessionLocal() as db:
+        b_open = db.query(T).filter(T.user_id == uid, T.account == "B",
+                                    T.status == "open").all()
+        assert len(b_open) == 1 and b_open[0].runup_pct == 4.2
+        # B's equity/concurrency are its own: A has 2 open, B has 1 open
+        assert db.query(T).filter(T.user_id == uid, T.account == "A",
+                                  T.status == "open").count() == 2
+
+    # summaries are account-scoped; API validates the account param
+    sb = paper_trades_summary(uid, account="B")
+    assert sb["summary"]["account"] == "B" and sb["summary"]["skipped"] == 1
+    assert sb["summary"]["open"] == 1
+    sa = paper_trades_summary(uid, account="A")
+    assert sa["summary"]["skipped"] == 0 and sa["summary"]["open"] == 2
+    r = client.get("/api/scalp/paper-trades?account=B", headers=auth)
+    assert r.status_code == 200 and r.json()["summary"]["account"] == "B"
+    assert client.get("/api/scalp/paper-trades?account=X", headers=auth).status_code == 422
     _uid()

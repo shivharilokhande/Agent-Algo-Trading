@@ -25,6 +25,14 @@ log = logging.getLogger("agentalgo.paper_trade")
 
 MAX_CONCURRENT = 2          # mirror the COMBINED backtest portfolio
 POLL_SECONDS = 10           # monitor cadence during market hours
+# Portfolio B (shadow, 10-Sep, user's idea): before entering, look at the
+# strike's OWN chart — if the premium already ran >15% off its low in the
+# last 15 min, the signal is late; B skips it (recorded as status=skipped).
+# A takes every signal regardless and stays the go-live evidence base.
+# PRE-REGISTERED: threshold/window locked for the month — tuned only at
+# month-end from the runup_pct logged on every trade.
+B_RUNUP_MAX_PCT = 15.0
+B_RUNUP_WINDOW_MIN = 15
 #   (30 → 10 on day 1: a PE waterfall crossed the SL between two 30s polls and
 #   filled −1.19R instead of ~−1R. 10s watches like an attentive human; a real
 #   resting SL-M order would still be a touch faster.)
@@ -48,24 +56,37 @@ def _paper_risk_pct(cfg: dict) -> float:
     return min(max(float(r), 0.1), 10.0)
 
 
-def _equity(db, user_id: str, base: float) -> tuple[float, float]:
+def _equity(db, user_id: str, base: float, account: str = "A") -> tuple[float, float]:
     """(equity from closed trades, capital reserved in open positions)."""
     from .models import ScalpPaperTrade as T
 
     closed_pnl = sum(t.pnl or 0.0 for t in db.query(T)
-                     .filter(T.user_id == user_id, T.status == "closed").all())
+                     .filter(T.user_id == user_id, T.account == account,
+                             T.status == "closed").all())
     reserved = sum(t.capital_used for t in db.query(T)
-                   .filter(T.user_id == user_id, T.status == "open").all())
+                   .filter(T.user_id == user_id, T.account == account,
+                           T.status == "open").all())
     return round(base + closed_pnl, 2), round(reserved, 2)
 
 
-def open_paper_trade(user_id: str, sig: dict, signal_id: str | None,
-                     expiry: str | None, cfg: dict) -> str | None:
-    """Open a portfolio paper trade for a just-emitted REAL signal.
+def _signal_runup(sig: dict, expiry: str | None) -> float | None:
+    """Premium run-up on the strike's own chart at signal time (None = unknown)."""
+    from .kite_data import kite_option_runup
 
-    Returns the trade id, or None when skipped (concurrency / unaffordable).
-    """
-    from .db import SessionLocal
+    strike = sig.get("strike")
+    if not (strike and expiry):
+        return None
+    try:
+        return kite_option_runup(sig["symbol"], expiry, int(strike),
+                                 sig["direction"], minutes=B_RUNUP_WINDOW_MIN)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _open_account_trade(db, user_id: str, sig: dict, signal_id: str | None,
+                        expiry: str | None, cfg: dict, account: str,
+                        runup: float | None) -> str | None:
+    """One account's entry decision for a signal (A: always; B: run-up gate)."""
     from .fno import DEFAULT_LOT_SIZES, size_position
     from .models import ScalpPaperTrade as T
 
@@ -74,33 +95,58 @@ def open_paper_trade(user_id: str, sig: dict, signal_id: str | None,
            or DEFAULT_LOT_SIZES.get(sig["symbol"]))
     if not (ep and sl and lot):
         return None
-    base = _base_capital(cfg)
-    risk_pct = _paper_risk_pct(cfg)
-    with SessionLocal() as db:
-        open_n = (db.query(T).filter(T.user_id == user_id, T.status == "open").count())
-        if open_n >= MAX_CONCURRENT:
-            log.info("Paper trade skipped (concurrency %s): %s", open_n, sig["instrument"])
-            return None
-        equity, reserved = _equity(db, user_id, base)
-        avail = equity - reserved
-        sizing = size_position(ep, sl, int(lot), avail, risk_pct)
-        lots = sizing.get("lots") or 0
-        if lots < 1:
-            log.info("Paper trade skipped (unaffordable at avail ₹%.0f): %s",
-                     avail, sig["instrument"])
-            return None
-        row = T(user_id=user_id, signal_id=signal_id,
-                day=datetime.now(IST).date().isoformat(),
-                symbol=sig["symbol"], rule=sig["rule"], direction=sig["direction"],
-                instrument=sig["instrument"], expiry=expiry,
-                spot_entry=sig.get("spot"), delta=sig.get("delta"),
-                entry_p=ep, sl=sl, tp=tp, lot_size=int(lot), lots=int(lots),
-                capital_used=round(ep * lot * lots, 2))
+    common = dict(user_id=user_id, signal_id=signal_id, account=account,
+                  day=datetime.now(IST).date().isoformat(), runup_pct=runup,
+                  symbol=sig["symbol"], rule=sig["rule"], direction=sig["direction"],
+                  instrument=sig["instrument"], expiry=expiry,
+                  spot_entry=sig.get("spot"), delta=sig.get("delta"),
+                  entry_p=ep, sl=sl, tp=tp, lot_size=int(lot))
+    if account == "B" and runup is not None and runup > B_RUNUP_MAX_PCT:
+        # too extended — B stands aside, and records WHY for the month-end audit
+        row = T(**common, lots=0, capital_used=0.0, status="skipped",
+                outcome="EXT", exit_source=None)
         db.add(row)
         db.commit()
-        log.info("Paper trade OPEN %s ×%s lots @ ₹%s (avail ₹%.0f)",
-                 sig["instrument"], lots, ep, avail)
-        return row.id
+        log.info("Paper B SKIP (runup %.1f%% > %s%%): %s",
+                 runup, B_RUNUP_MAX_PCT, sig["instrument"])
+        return None
+    open_n = (db.query(T).filter(T.user_id == user_id, T.account == account,
+                                 T.status == "open").count())
+    if open_n >= MAX_CONCURRENT:
+        log.info("Paper %s skipped (concurrency %s): %s", account, open_n,
+                 sig["instrument"])
+        return None
+    equity, reserved = _equity(db, user_id, _base_capital(cfg), account)
+    avail = equity - reserved
+    sizing = size_position(ep, sl, int(lot), avail, _paper_risk_pct(cfg))
+    lots = sizing.get("lots") or 0
+    if lots < 1:
+        log.info("Paper %s skipped (unaffordable at avail ₹%.0f): %s",
+                 account, avail, sig["instrument"])
+        return None
+    row = T(**common, lots=int(lots), capital_used=round(ep * lot * lots, 2))
+    db.add(row)
+    db.commit()
+    log.info("Paper %s OPEN %s ×%s lots @ ₹%s (avail ₹%.0f, runup %s)",
+             account, sig["instrument"], lots, ep, avail, runup)
+    return row.id
+
+
+def open_paper_trade(user_id: str, sig: dict, signal_id: str | None,
+                     expiry: str | None, cfg: dict) -> str | None:
+    """Open the paper trades for a just-emitted REAL signal: portfolio A
+    (every signal — unchanged baseline) and shadow portfolio B (premium
+    run-up gate). Returns A's trade id (None when A skipped)."""
+    from .db import SessionLocal
+
+    runup = _signal_runup(sig, expiry)  # one Kite lookup, logged on both
+    with SessionLocal() as db:
+        rid = _open_account_trade(db, user_id, sig, signal_id, expiry, cfg, "A", runup)
+        try:
+            _open_account_trade(db, user_id, sig, signal_id, expiry, cfg, "B", runup)
+        except Exception:  # noqa: BLE001 — B must never break A
+            log.exception("Paper B open failed")
+        return rid
 
 
 def _close(db, t, exit_p: float, outcome: str, source: str) -> None:
@@ -211,7 +257,9 @@ async def paper_trade_sweep() -> int:
                     cfg = json.loads(srow.config_json or "{}") if srow else {}
                     base_by_user[t.user_id] = _base_capital(cfg)
                 closed_pnl = sum(x.pnl or 0.0 for x in db.query(T)
-                                 .filter(T.user_id == t.user_id, T.status == "closed").all())
+                                 .filter(T.user_id == t.user_id,
+                                         T.account == t.account,
+                                         T.status == "closed").all())
                 t.equity_after = round(base_by_user[t.user_id] + closed_pnl, 2)
         db.commit()
     if closed:
@@ -228,7 +276,7 @@ async def paper_trade_loop() -> None:
         await asyncio.sleep(POLL_SECONDS)
 
 
-def paper_trades_summary(user_id: str, days: int = 35) -> dict:
+def paper_trades_summary(user_id: str, days: int = 35, account: str = "A") -> dict:
     """Backtest-style payload: rows (newest first) + portfolio summary."""
     from .db import SessionLocal
     from .models import ScalpPaperTrade as T, Setting
@@ -238,9 +286,10 @@ def paper_trades_summary(user_id: str, days: int = 35) -> dict:
         srow = db.get(Setting, user_id)
         cfg = json.loads(srow.config_json or "{}") if srow else {}
         base = _base_capital(cfg)
-        rows = (db.query(T).filter(T.user_id == user_id, T.day >= cutoff)
+        rows = (db.query(T).filter(T.user_id == user_id, T.account == account,
+                                   T.day >= cutoff)
                 .order_by(T.created_at.desc()).limit(500).all())
-        equity, reserved = _equity(db, user_id, base)
+        equity, reserved = _equity(db, user_id, base, account)
         out_rows = []
         for t in rows:
             out_rows.append({
@@ -255,24 +304,32 @@ def paper_trades_summary(user_id: str, days: int = 35) -> dict:
                 "capital_used": t.capital_used, "charges": t.charges,
                 "pnl": t.pnl, "outcome": t.outcome, "r": t.r_multiple,
                 "status": t.status, "exit_source": t.exit_source,
-                "equity_after": t.equity_after,
+                "equity_after": t.equity_after, "runup_pct": t.runup_pct,
             })
     closed = [r for r in out_rows if r["status"] == "closed"]
     wins = sum(1 for r in closed if (r["pnl"] or 0) > 0)
+    note_a = ("One paper account (base = trading_capital). Exits on real "
+              "Kite bid when connected (no slippage added — the spread is "
+              "in the fills); 'modeled' exits use spot-replay + 0.25%/side.")
+    note_b = (f"Shadow portfolio B: identical signals, but skips entries whose "
+              f"option premium already ran >{B_RUNUP_MAX_PCT:.0f}% off its "
+              f"{B_RUNUP_WINDOW_MIN}-min low ('EXT' rows). Same capital, risk "
+              f"and exits as A — the month-end A/B comparison decides whether "
+              f"the run-up gate goes live.")
     return {
         "rows": out_rows,
         "summary": {
+            "account": account,
             "base_capital": base, "risk_pct": _paper_risk_pct(cfg),
             "equity": equity, "reserved": reserved,
             "open": sum(1 for r in out_rows if r["status"] == "open"),
+            "skipped": sum(1 for r in out_rows if r["status"] == "skipped"),
             "n_closed": len(closed), "wins": wins,
             "win_pct": round(wins / len(closed) * 100, 1) if closed else None,
             "net_pnl": round(sum(r["pnl"] or 0 for r in closed), 2),
             "total_charges": round(sum(r["charges"] or 0 for r in closed), 2),
             "sum_r": round(sum(r["r"] or 0 for r in closed), 2),
             "max_concurrent": MAX_CONCURRENT,
-            "note": ("One paper account (base = trading_capital). Exits on real "
-                     "Kite bid when connected (no slippage added — the spread is "
-                     "in the fills); 'modeled' exits use spot-replay + 0.25%/side."),
+            "note": note_b if account == "B" else note_a,
         },
     }

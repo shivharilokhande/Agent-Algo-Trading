@@ -223,6 +223,43 @@ def kite_option_quote(symbol: str, expiry_str: str, strike: int, direction: str,
     return None
 
 
+def kite_option_runup(symbol: str, expiry_str: str, strike: int, direction: str,
+                      minutes: int = 15, user_id: str | None = None) -> float | None:
+    """% the option premium has run from its LOW of the last `minutes` 1-min
+    candles to its current price — the 'already extended?' check a human makes
+    on the strike's own chart before entering. None when it can't be computed
+    (no Kite session, no historical add-on, fresh contract) — callers fail open.
+    """
+    uid = user_id or _any_connected_user()
+    if uid is None:
+        return None
+    kite = _client(uid)
+    if kite is None:
+        return None
+    from datetime import timedelta
+
+    for ts in tradingsymbols(symbol, expiry_str, int(strike), direction):
+        try:
+            q = kite.quote([ts]).get(ts)
+            if not q or not q.get("instrument_token"):
+                continue
+            cur = float(q.get("last_price") or 0)
+            end = datetime.now(IST)
+            candles = kite.historical_data(q["instrument_token"],
+                                           end - timedelta(minutes=minutes + 2),
+                                           end, "minute")
+            lows = [float(c["low"]) for c in candles[-minutes:] if c.get("low")]
+            if not lows or cur <= 0:
+                return None
+            low = min(lows)
+            if low <= 0:
+                return None
+            return round((cur - low) / low * 100, 2)
+        except Exception as exc:  # noqa: BLE001
+            log.info("Kite runup miss %s: %s", ts, exc)
+    return None
+
+
 _INDEX_TOKEN = {"NIFTY": 256265, "BANKNIFTY": 260105, "FINNIFTY": 257801}
 
 

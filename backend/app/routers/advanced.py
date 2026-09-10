@@ -414,13 +414,17 @@ async def scalp_paper_score(
 def scalp_paper_trades(
     user: Annotated[User, Depends(get_current_user)],
     days: int = 35,
+    account: str = "A",
 ):
-    """Live paper-trading desk: backtest-style rows + portfolio summary."""
+    """Live paper-trading desk: backtest-style rows + portfolio summary.
+    account=A: baseline (every signal); account=B: run-up-gated shadow."""
     from ..paper_trade import paper_trades_summary
 
     if not 1 <= days <= 90:
         raise HTTPException(status_code=422, detail="days must be 1–90")
-    return paper_trades_summary(user.id, days)
+    if account not in ("A", "B"):
+        raise HTTPException(status_code=422, detail="account must be A or B")
+    return paper_trades_summary(user.id, days, account=account)
 
 
 @router.get("/scalp/status")

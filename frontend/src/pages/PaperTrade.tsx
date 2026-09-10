@@ -14,10 +14,11 @@ export default function PaperTrade() {
   const [riskEdit, setRiskEdit] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [loadedOnce, setLoadedOnce] = useState(false);
+  const [account, setAccount] = useState<"A" | "B">("A");
 
-  async function load() {
+  async function load(acct: "A" | "B" = account) {
     try {
-      const d = await api.get<any>("/api/scalp/paper-trades?days=35");
+      const d = await api.get<any>(`/api/scalp/paper-trades?days=35&account=${acct}`);
       setData(d);
       setErr("");
       if (!loadedOnce && d?.summary) {  // seed the editors once, don't clobber typing
@@ -28,11 +29,11 @@ export default function PaperTrade() {
     } catch (ex: any) { setErr(ex.message); }
   }
   useEffect(() => {
-    load();
-    const t = setInterval(load, 15000);
+    load(account);
+    const t = setInterval(() => load(account), 15000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedOnce]);
+  }, [loadedOnce, account]);
 
   const capOk = Number.isFinite(Number(capEdit)) && Number(capEdit) >= 10000;
   const riskOk = Number.isFinite(Number(riskEdit)) && Number(riskEdit) >= 0.1 && Number(riskEdit) <= 10;
@@ -61,6 +62,20 @@ export default function PaperTrade() {
         Exact Zerodha charges. No real orders — this is the 30-day evidence for the go-live decision.
       </p>
 
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        {(["A", "B"] as const).map((a) => (
+          <button key={a} className={account === a ? undefined : "secondary"}
+            onClick={() => setAccount(a)}>
+            {a === "A" ? "A · every signal" : "B · strike-chart checked"}
+          </button>
+        ))}
+        <span className="muted" style={{ fontSize: 12, alignSelf: "center" }}>
+          {account === "B"
+            ? "B skips signals whose option premium already ran >15% off its 15-min low (EXT rows)."
+            : "A takes every signal — the unchanged go-live baseline."}
+        </span>
+      </div>
+
       {err && <div className="error-box">{err}</div>}
 
       {s && (
@@ -76,6 +91,10 @@ export default function PaperTrade() {
               <div className="l">WIN rate ({s.wins}/{s.n_closed} net-profitable) · {s.sum_r >= 0 ? "+" : ""}{s.sum_r}R</div></div>
             <div><div style={{ fontSize: 22, fontWeight: 700 }}>{s.open}</div>
               <div className="l">Open position{s.open === 1 ? "" : "s"}</div></div>
+            {account === "B" && (
+              <div><div style={{ fontSize: 22, fontWeight: 700 }}>{s.skipped ?? 0}</div>
+                <div className="l">Skipped (extended)</div></div>
+            )}
             <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginLeft: "auto" }}>
               <label style={{ fontSize: 12 }}>Capital ₹<br />
                 <input style={{ width: 110 }} value={capEdit}
@@ -102,6 +121,7 @@ export default function PaperTrade() {
             <thead>
               <tr><th>Day</th><th>Entry time</th><th>Exit time</th><th>Rule</th><th>Buy</th>
                 <th>Entry ₹ (premium)</th><th>Exit ₹ (premium)</th>
+                <th>Run-up</th>
                 <th>Lots</th><th>Capital used</th><th>Charges ₹</th><th>P&L ₹ (net)</th>
                 <th>Outcome</th><th>Equity</th></tr>
             </thead>
@@ -121,7 +141,9 @@ export default function PaperTrade() {
                     {t.exit_p != null ? inr(t.exit_p) : "—"}
                     {t.exit_source === "modeled" && <div className="muted" style={{ fontSize: 10 }}>modeled</div>}
                   </td>
-                  <td>{t.lots}</td>
+                  <td className="mono" style={{ color: t.runup_pct != null && t.runup_pct > 15 ? "var(--red)" : undefined }}>
+                    {t.runup_pct != null ? `${t.runup_pct}%` : "—"}</td>
+                  <td>{t.status === "skipped" ? "—" : t.lots}</td>
                   <td className="mono">{inr(t.capital_used)}</td>
                   <td className="mono" style={{ color: "var(--red)" }}>{t.charges != null ? `−${Math.abs(t.charges).toLocaleString("en-IN")}` : "—"}</td>
                   <td className="mono" style={{ color: pnlColor(t.pnl) }}>
@@ -129,6 +151,9 @@ export default function PaperTrade() {
                   <td>
                     {t.status === "open"
                       ? <span className="pill" style={{ background: "#e8f0fe", color: "#1a56db" }}>OPEN</span>
+                      : t.status === "skipped"
+                      ? <span className="pill" style={{ background: "#f3f4f6", color: "#4b5563" }}
+                          title="Skipped — premium already extended at signal time">SKIP·EXT</span>
                       : <span className="pill" style={{
                           background: t.outcome === "TP" ? "#def7ec" : t.outcome === "SL" ? "#fde8e8" : "#fdf6b2",
                           color: t.outcome === "TP" ? "#03543f" : t.outcome === "SL" ? "#9b1c1c" : "#723b13" }}>
@@ -139,7 +164,7 @@ export default function PaperTrade() {
                 </tr>
               ))}
               {rows.length === 0 && (
-                <tr><td colSpan={13} className="muted">
+                <tr><td colSpan={14} className="muted">
                   No paper trades yet — from the next market session, every real signal opens a row
                   here automatically and fills in as it resolves.
                 </td></tr>
