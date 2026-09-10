@@ -108,6 +108,36 @@ async def test_sweep_resolves_on_kite_quote(client, auth, monkeypatch):
     _uid()
 
 
+@pytest.mark.anyio
+async def test_late_quote_settles_by_replay(client, auth, monkeypatch):
+    """Regression (10-Sep outage): a bid arriving well past the 20-min window
+    must settle by replay — never be stamped as a live TP/SL fill."""
+    from datetime import timedelta
+
+    from app.db import SessionLocal
+    from app.models import ScalpPaperTrade
+    from app.paper_trade import open_paper_trade, paper_trade_sweep
+
+    uid = _uid()
+    open_paper_trade(uid, SIG, "sig1", "16-Sep-2026", CFG)
+    with SessionLocal() as db:  # age the trade (and its shadow-B twin) 40 min
+        for t in db.query(ScalpPaperTrade).filter(ScalpPaperTrade.user_id == uid).all():
+            t.created_at = t.created_at - timedelta(minutes=40)
+        db.commit()
+    monkeypatch.setattr("app.fno.is_market_hours_ist", lambda: True)
+    # live bid is way above TP (the post-window waterfall) — must be ignored
+    monkeypatch.setattr("app.kite_data.kite_option_quote",
+                        lambda *a, **k: {"bid": 179.2, "ask": 179.6, "last_price": 179.4})
+    monkeypatch.setattr("app.paper_trade._modeled_exit",
+                        lambda t, now: (88.95, "TIME"))
+    await paper_trade_sweep()
+    with SessionLocal() as db:
+        for t in db.query(ScalpPaperTrade).filter(ScalpPaperTrade.user_id == uid).all():
+            assert t.status == "closed" and t.outcome == "TIME"
+            assert t.exit_p == 88.95 and t.exit_source == "modeled"
+    _uid()
+
+
 def test_shadow_b_runup_gate(client, auth, monkeypatch):
     """Portfolio B: >15% premium run-up → skipped (EXT); calm → B opens too;
     unknown run-up → fail open. A takes every signal regardless."""

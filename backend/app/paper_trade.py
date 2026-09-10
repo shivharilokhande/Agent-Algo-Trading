@@ -33,6 +33,12 @@ POLL_SECONDS = 10           # monitor cadence during market hours
 # month-end from the runup_pct logged on every trade.
 B_RUNUP_MAX_PCT = 15.0
 B_RUNUP_WINDOW_MIN = 15
+# 10-Sep outage lesson: if quotes only come back AFTER the 20-min window
+# (network/DNS down), the first stale bid must not be stamped as the fill —
+# a trade this late is settled by spot replay instead (grace covers normal
+# poll jitter). The 11:42 trade got +4.11R from a 20-min-late quote; the
+# rule-faithful result was a −0.76R time stop.
+LATE_SETTLE_GRACE_MIN = 2
 #   (30 → 10 on day 1: a PE waterfall crossed the SL between two 30s polls and
 #   filled −1.19R instead of ~−1R. 10s watches like an attentive human; a real
 #   resting SL-M order would still be a touch faster.)
@@ -220,7 +226,16 @@ async def paper_trade_sweep() -> int:
                 except Exception:  # noqa: BLE001
                     quote = None
             bid = quote.get("bid") or quote.get("last_price") if quote else None
-            if bid:
+            if bid and age_min >= SCALP_TIME_STOP_MIN + LATE_SETTLE_GRACE_MIN:
+                # quote arrived well past the window (feed was down): the live
+                # bid is NOT the fill the rule would have gotten — settle by
+                # replay; only if replay is impossible fall back to the bid
+                modeled = await asyncio.to_thread(_modeled_exit, t, now_ist)
+                if modeled is not None:
+                    _close(db, t, modeled[0], modeled[1], "modeled")
+                else:
+                    _close(db, t, bid, "TIME", "kite")
+            elif bid:
                 if bid <= t.sl:
                     _close(db, t, bid, "SL", "kite")
                 elif bid >= t.tp:
