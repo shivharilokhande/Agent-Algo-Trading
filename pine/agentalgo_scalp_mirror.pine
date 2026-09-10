@@ -1,0 +1,103 @@
+//@version=6
+indicator("AgentAlgo Scalp Mirror", overlay=true)
+
+// ============================================================================
+// Visual mirror of AgentAlgo's live scalp engine (app/scalp.py).
+// FOR CHART REVIEW ONLY — the engine on Kite data stays the source of truth.
+// Not mirrored here: OI-wall rule (needs option-chain data), day bias filter,
+// 3-SL day stop, and Wilder-vs-simple RSI differs slightly.
+// Use on NSE:NIFTY or NSE:BANKNIFTY, 1-minute timeframe.
+// ============================================================================
+
+OR_MIN   = 15      // opening range minutes
+MAX_ORBP = 55.0    // max opening-range width (bp of spot)
+MAX_EGBP = 4.0     // max EMA9-EMA20 gap (bp of spot)
+COOL_MIN = 30      // per-direction cooldown, minutes
+CUTOFF   = 900     // 15:00 IST in minutes
+
+newSess = session.isfirstbar
+var int sbar = 0
+sbar := newSess ? 0 : sbar + 1
+
+// session-reset EMAs (engine computes on session bars only)
+var float e9  = na
+var float e20 = na
+k9  = 2.0 / 10.0
+k20 = 2.0 / 21.0
+e9  := newSess ? close : k9 * close + (1 - k9) * e9
+e20 := newSess ? close : k20 * close + (1 - k20) * e20
+
+// session VWAP with zero-volume fallback (NSE index feeds have no volume)
+var float cumPV = 0.0
+var float cumV  = 0.0
+var float cumTP = 0.0
+var int   nTP   = 0
+if newSess
+    cumPV := 0.0
+    cumV  := 0.0
+    cumTP := 0.0
+    nTP   := 0
+tp = hlc3
+cumPV += tp * volume
+cumV  += volume
+cumTP += tp
+nTP   += 1
+vw = cumV > 0 ? cumPV / cumV : cumTP / nTP
+
+// opening range = first 15 session bars
+var float orH = na
+var float orL = na
+if newSess
+    orH := high
+    orL := low
+else if sbar < OR_MIN
+    orH := math.max(orH, high)
+    orL := math.min(orL, low)
+
+rs = ta.rsi(close, 14)
+
+istMins = hour(time, "Asia/Kolkata") * 60 + minute(time, "Asia/Kolkata")
+active  = sbar >= 20 and istMins < CUTOFF
+
+trendUp = e9 > e20 and close > vw
+trendDn = e9 < e20 and close < vw
+qual = (orH - orL) / close * 10000 <= MAX_ORBP and math.abs(e9 - e20) / close * 10000 <= MAX_EGBP
+
+// ORB: FRESH break (one of last 3 closes still inside the range)
+freshUp = close[1] <= orH or close[2] <= orH or close[3] <= orH
+freshDn = close[1] >= orL or close[2] >= orL or close[3] >= orL
+orbCE = active and qual and close > orH and freshUp and trendUp and rs < 75
+orbPE = active and qual and close < orL and freshDn and trendDn and rs > 25
+
+// VWAP reclaim/reject: cross in last 3 bars, holding >=0.05% clear
+clr = vw * 0.0005
+vrCE = active and qual and (close[1] < vw or close[2] < vw or close[3] < vw) and close > vw + clr and e9 > e20 and rs > 45 and rs < 70
+vrPE = active and qual and (close[1] > vw or close[2] > vw or close[3] > vw) and close < vw - clr and e9 < e20 and rs > 30 and rs < 55
+
+// per-direction 30-min cooldown (engine: COOLDOWN_MIN keyed by direction)
+var int lastCE = -100000
+var int lastPE = -100000
+if newSess
+    lastCE := -100000
+    lastPE := -100000
+ceFire = (orbCE or vrCE) and istMins - lastCE >= COOL_MIN
+peFire = (orbPE or vrPE) and istMins - lastPE >= COOL_MIN
+if ceFire
+    lastCE := istMins
+if peFire
+    lastPE := istMins
+
+plot(vw, "VWAP", color=color.new(color.orange, 0), linewidth=2)
+plot(e9, "EMA9", color=color.new(color.teal, 0))
+plot(e20, "EMA20", color=color.new(color.purple, 0))
+plot(sbar >= OR_MIN ? orH : na, "OR high", color=color.new(color.gray, 30), style=plot.style_linebr)
+plot(sbar >= OR_MIN ? orL : na, "OR low", color=color.new(color.gray, 30), style=plot.style_linebr)
+bgcolor(active ? na : color.new(color.gray, 94))
+
+plotshape(ceFire and orbCE, "ORB CE", shape.triangleup, location.belowbar, color.new(color.green, 0), text="ORB CE", textcolor=color.green, size=size.small)
+plotshape(ceFire and not orbCE, "VWAP CE", shape.triangleup, location.belowbar, color.new(color.blue, 0), text="VWAP CE", textcolor=color.blue, size=size.small)
+plotshape(peFire and orbPE, "ORB PE", shape.triangledown, location.abovebar, color.new(color.red, 0), text="ORB PE", textcolor=color.red, size=size.small)
+plotshape(peFire and not orbPE, "VWAP PE", shape.triangledown, location.abovebar, color.new(color.maroon, 0), text="VWAP PE", textcolor=color.maroon, size=size.small)
+
+alertcondition(ceFire, "AgentAlgo CE signal", "AgentAlgo scalp CE signal (buy CE)")
+alertcondition(peFire, "AgentAlgo PE signal", "AgentAlgo scalp PE signal (buy PE)")
