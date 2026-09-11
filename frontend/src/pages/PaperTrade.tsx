@@ -35,6 +35,17 @@ export default function PaperTrade() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedOnce, account]);
 
+  const [exiting, setExiting] = useState<string | null>(null);
+  async function manualExit(id: string) {
+    if (!window.confirm("Exit this paper trade now at the live Kite bid? " +
+        "It will be recorded as a MANUAL exit (not a rule outcome).")) return;
+    setExiting(id); setErr("");
+    try {
+      await api.post(`/api/scalp/paper-trades/${id}/exit`, {});
+      await load(account);
+    } catch (ex: any) { setErr(ex.message); } finally { setExiting(null); }
+  }
+
   const capOk = Number.isFinite(Number(capEdit)) && Number(capEdit) >= 10000;
   const riskOk = Number.isFinite(Number(riskEdit)) && Number(riskEdit) >= 0.1 && Number(riskEdit) <= 10;
 
@@ -150,13 +161,21 @@ export default function PaperTrade() {
                     {t.pnl != null ? `${t.pnl >= 0 ? "+" : ""}${t.pnl.toLocaleString("en-IN")}` : "—"}</td>
                   <td>
                     {t.status === "open"
-                      ? <span className="pill" style={{ background: "#e8f0fe", color: "#1a56db" }}>OPEN</span>
+                      ? <>
+                          <span className="pill" style={{ background: "#e8f0fe", color: "#1a56db" }}>OPEN</span>
+                          <button className="secondary" disabled={exiting === t.id}
+                            style={{ marginLeft: 6, padding: "2px 8px", fontSize: 11 }}
+                            onClick={() => manualExit(t.id)}>
+                            {exiting === t.id ? "…" : "Exit"}</button>
+                        </>
                       : t.status === "skipped"
                       ? <span className="pill" style={{ background: "#f3f4f6", color: "#4b5563" }}
                           title="Skipped — premium already extended at signal time">SKIP·EXT</span>
                       : <span className="pill" style={{
-                          background: t.outcome === "TP" ? "#def7ec" : t.outcome === "SL" ? "#fde8e8" : "#fdf6b2",
-                          color: t.outcome === "TP" ? "#03543f" : t.outcome === "SL" ? "#9b1c1c" : "#723b13" }}>
+                          background: t.outcome === "TP" ? "#def7ec" : t.outcome === "SL" ? "#fde8e8"
+                            : t.outcome === "MANUAL" ? "#ede9fe" : "#fdf6b2",
+                          color: t.outcome === "TP" ? "#03543f" : t.outcome === "SL" ? "#9b1c1c"
+                            : t.outcome === "MANUAL" ? "#5b21b6" : "#723b13" }}>
                           {t.outcome}</span>}
                     {t.r != null && <span className="muted" style={{ fontSize: 11 }}> {t.r >= 0 ? "+" : ""}{t.r}R</span>}
                   </td>

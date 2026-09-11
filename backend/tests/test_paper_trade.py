@@ -150,6 +150,33 @@ async def test_late_quote_settles_by_replay(client, auth, monkeypatch):
     _uid()
 
 
+def test_manual_exit(client, auth, monkeypatch):
+    """Exit button: closes at live bid with outcome MANUAL; 409 with no quote;
+    404 for a closed/foreign trade."""
+    from app.db import SessionLocal
+    from app.models import ScalpPaperTrade
+    from app.paper_trade import open_paper_trade
+
+    uid = _uid()
+    tid = open_paper_trade(uid, SIG, "sig1", "16-Sep-2026", CFG)
+    # no quote (Kite down) → 409, trade stays open
+    monkeypatch.setattr("app.kite_data.kite_option_quote", lambda *a, **k: None)
+    assert client.post(f"/api/scalp/paper-trades/{tid}/exit", headers=auth).status_code == 409
+    # live bid → closed as MANUAL at the bid
+    monkeypatch.setattr("app.kite_data.kite_option_quote",
+                        lambda *a, **k: {"bid": 111.0, "ask": 111.4, "last_price": 111.2})
+    r = client.post(f"/api/scalp/paper-trades/{tid}/exit", headers=auth)
+    assert r.status_code == 200 and r.json()["outcome"] == "MANUAL"
+    with SessionLocal() as db:
+        t = db.get(ScalpPaperTrade, tid)
+        assert t.status == "closed" and t.exit_p == 111.0
+        assert t.outcome == "MANUAL" and t.exit_source == "kite"
+        assert t.equity_after is not None
+    # already closed → 404
+    assert client.post(f"/api/scalp/paper-trades/{tid}/exit", headers=auth).status_code == 404
+    _uid()
+
+
 def test_shadow_b_runup_gate(client, auth, monkeypatch):
     """Portfolio B: >15% premium run-up → skipped (EXT); calm → B opens too;
     unknown run-up → fail open. A takes every signal regardless."""

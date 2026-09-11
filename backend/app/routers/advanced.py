@@ -427,6 +427,24 @@ def scalp_paper_trades(
     return paper_trades_summary(user.id, days, account=account)
 
 
+@router.post("/scalp/paper-trades/{trade_id}/exit")
+async def scalp_paper_manual_exit(
+    trade_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """Close an open paper trade now at the live Kite bid (outcome MANUAL)."""
+    import asyncio
+
+    from ..paper_trade import manual_exit
+
+    try:
+        return await asyncio.to_thread(manual_exit, user.id, trade_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.get("/scalp/status")
 async def scalp_status(
     user: Annotated[User, Depends(get_current_user)],

@@ -202,6 +202,65 @@ def _modeled_exit(t, now_ist: datetime) -> tuple[float, str] | None:
     return exit_p, res["outcome"]
 
 
+def _chain_equity_after(db, rows) -> None:
+    """Fill equity_after on freshly-closed rows (per user+account chain)."""
+    import json as _json
+
+    from .models import ScalpPaperTrade as T, Setting
+
+    db.flush()
+    base_by_user: dict[str, float] = {}
+    for t in rows:
+        if t.status != "closed" or t.equity_after is not None:
+            continue
+        if t.user_id not in base_by_user:
+            srow = db.get(Setting, t.user_id)
+            cfg = _json.loads(srow.config_json or "{}") if srow else {}
+            base_by_user[t.user_id] = _base_capital(cfg)
+        closed_pnl = sum(x.pnl or 0.0 for x in db.query(T)
+                         .filter(T.user_id == t.user_id, T.account == t.account,
+                                 T.status == "closed").all())
+        t.equity_after = round(base_by_user[t.user_id] + closed_pnl, 2)
+
+
+def manual_exit(user_id: str, trade_id: str) -> dict:
+    """Close an open paper trade NOW at the live Kite bid, outcome MANUAL.
+
+    The human's exit button — mirrors real trading, where the operator can
+    always flatten. Requires a live quote (no guessing a fill when the feed
+    is down). Raises ValueError (not found / not open) or RuntimeError (no
+    live quote).
+    """
+    from .db import SessionLocal
+    from .kite_data import kite_option_quote
+    from .models import ScalpPaperTrade as T
+
+    with SessionLocal() as db:
+        t = db.get(T, trade_id)
+        if t is None or t.user_id != user_id:
+            raise ValueError("Paper trade not found")
+        if t.status != "open":
+            raise ValueError("Trade is not open")
+        try:
+            strike = int(t.instrument.split()[1])
+            quote = kite_option_quote(t.symbol, t.expiry, strike, t.direction,
+                                      t.user_id)
+        except Exception:  # noqa: BLE001
+            quote = None
+        bid = (quote.get("bid") or quote.get("last_price")) if quote else None
+        if not bid:
+            raise RuntimeError("No live quote — manual exit needs a connected "
+                               "Kite session during market hours")
+        _close(db, t, float(bid), "MANUAL", "kite")
+        t.status = "closed"
+        _chain_equity_after(db, [t])
+        db.commit()
+        log.info("Paper %s MANUAL exit %s @ ₹%s (%.2fR)", t.account,
+                 t.instrument, t.exit_p, t.r_multiple)
+        return {"id": t.id, "exit_p": t.exit_p, "pnl": t.pnl,
+                "r": t.r_multiple, "outcome": t.outcome}
+
+
 async def paper_trade_sweep() -> int:
     """One monitor pass: resolve open paper trades. Returns closes made."""
     from .db import SessionLocal
@@ -257,25 +316,9 @@ async def paper_trade_sweep() -> int:
             closed += 1
         if closed:
             # equity_after: chain in close order for a readable running column.
-            # SessionLocal runs autoflush=False — flush the closes first or the
-            # closed-pnl query below reads PRE-close rows (live bug, day 1: the
-            # first trade stored equity_after = base, ignoring its own +₹2.5K).
-            db.flush()
-            base_by_user: dict[str, float] = {}
-            from .models import Setting
-
-            for t in open_rows:
-                if t.status != "closed" or t.equity_after is not None:
-                    continue
-                if t.user_id not in base_by_user:
-                    srow = db.get(Setting, t.user_id)
-                    cfg = json.loads(srow.config_json or "{}") if srow else {}
-                    base_by_user[t.user_id] = _base_capital(cfg)
-                closed_pnl = sum(x.pnl or 0.0 for x in db.query(T)
-                                 .filter(T.user_id == t.user_id,
-                                         T.account == t.account,
-                                         T.status == "closed").all())
-                t.equity_after = round(base_by_user[t.user_id] + closed_pnl, 2)
+            # (helper flushes first — autoflush=False sessions otherwise read
+            # PRE-close rows; live bug, day 1)
+            _chain_equity_after(db, open_rows)
         db.commit()
     if closed:
         log.info("Paper trade sweep closed %s position(s)", closed)
