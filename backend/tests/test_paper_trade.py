@@ -75,6 +75,18 @@ def test_close_math_and_summary(client, auth):
     _uid()
 
 
+def test_paper_settings_save(client, auth):
+    """Regression (11-Sep): paper_capital/paper_risk_pct were range-checked but
+    missing from the settings whitelist — the Paper Trade Save button 422'd."""
+    r = client.put("/api/settings", headers=auth,
+                   json={"config": {"paper_capital": 100_000, "paper_risk_pct": 5}})
+    assert r.status_code == 200
+    r = client.get("/api/settings", headers=auth)
+    assert r.json()["config"]["paper_risk_pct"] == 5
+    assert client.put("/api/settings", headers=auth,
+                      json={"config": {"paper_risk_pct": 99}}).status_code == 422
+
+
 import pytest
 
 

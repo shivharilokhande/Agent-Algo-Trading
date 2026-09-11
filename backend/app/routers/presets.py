@@ -45,6 +45,8 @@ _SETTING_VALIDATORS: dict[str, type | tuple] = {
     "scalp_symbols": list,
     "scalp_risk_pct": (int, float),
     "scalp_exit_policy": str,  # "A" (bank at TP, default) | "G" (ride after TP)
+    "paper_capital": (int, float),   # Paper Trade desk account base
+    "paper_risk_pct": (int, float),  # Paper Trade desk risk %/trade
 }
 
 
