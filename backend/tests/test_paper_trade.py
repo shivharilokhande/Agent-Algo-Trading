@@ -140,13 +140,19 @@ async def test_late_quote_settles_by_replay(client, auth, monkeypatch):
     # live bid is way above TP (the post-window waterfall) — must be ignored
     monkeypatch.setattr("app.kite_data.kite_option_quote",
                         lambda *a, **k: {"bid": 179.2, "ask": 179.6, "last_price": 179.4})
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _Z
+
+    rule_exit = _dt(2026, 9, 16, 12, 59, tzinfo=_Z("Asia/Kolkata"))
     monkeypatch.setattr("app.paper_trade._modeled_exit",
-                        lambda t, now: (88.95, "TIME"))
+                        lambda t, now: (88.95, "TIME", rule_exit))
     await paper_trade_sweep()
     with SessionLocal() as db:
         for t in db.query(ScalpPaperTrade).filter(ScalpPaperTrade.user_id == uid).all():
             assert t.status == "closed" and t.outcome == "TIME"
             assert t.exit_p == 88.95 and t.exit_source == "modeled"
+            # exit_at = the RULE's exit moment, not the delayed sweep's clock
+            assert t.exit_at.strftime("%H:%M") == "07:29"  # 12:59 IST in UTC
     _uid()
 
 

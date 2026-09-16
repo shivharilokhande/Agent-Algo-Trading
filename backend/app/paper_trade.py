@@ -155,14 +155,16 @@ def open_paper_trade(user_id: str, sig: dict, signal_id: str | None,
         return rid
 
 
-def _close(db, t, exit_p: float, outcome: str, source: str) -> None:
+def _close(db, t, exit_p: float, outcome: str, source: str,
+           exit_at: datetime | None = None) -> None:
     from .backtest import trade_cost
 
     exit_p = max(round(exit_p, 2), 0.05)
     risk = max(t.entry_p - t.sl, 0.01)
     slip = 0.0 if source == "kite" else 0.25  # real bid/ask already pays the spread
     t.exit_p = exit_p
-    t.exit_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    t.exit_at = (exit_at.astimezone(timezone.utc).replace(tzinfo=None) if exit_at
+                 else datetime.now(timezone.utc).replace(tzinfo=None))
     t.exit_source = source
     t.outcome = outcome
     t.r_multiple = round((exit_p - t.entry_p) / risk, 2)
@@ -199,7 +201,10 @@ def _modeled_exit(t, now_ist: datetime) -> tuple[float, str] | None:
         return None  # window not complete yet — keep it open
     risk = max(t.entry_p - t.sl, 0.01)
     exit_p = round(t.entry_p + res["r"] * risk, 2)
-    return exit_p, res["outcome"]
+    # the RULE's exit moment (16-Sep lesson: a delayed settle must not stamp
+    # the sweep's wall-clock as the exit time — it reads as a longer hold)
+    exit_at = _entry_ist(t) + timedelta(minutes=res["bars_held"])
+    return exit_p, res["outcome"], exit_at
 
 
 def _chain_equity_after(db, rows) -> None:
@@ -291,7 +296,7 @@ async def paper_trade_sweep() -> int:
                 # replay; only if replay is impossible fall back to the bid
                 modeled = await asyncio.to_thread(_modeled_exit, t, now_ist)
                 if modeled is not None:
-                    _close(db, t, modeled[0], modeled[1], "modeled")
+                    _close(db, t, modeled[0], modeled[1], "modeled", modeled[2])
                 else:
                     _close(db, t, bid, "TIME", "kite")
             elif bid:
@@ -311,7 +316,7 @@ async def paper_trade_sweep() -> int:
                 modeled = await asyncio.to_thread(_modeled_exit, t, now_ist)
                 if modeled is None:
                     continue
-                _close(db, t, modeled[0], modeled[1], "modeled")
+                _close(db, t, modeled[0], modeled[1], "modeled", modeled[2])
             t.status = "closed"
             closed += 1
         if closed:
