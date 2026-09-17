@@ -20,7 +20,7 @@ jobs:
       - name: Tests
         working-directory: backend
         env:
-          AGENTALGO_ADMIN_EMAIL: admin@ci.local
+          AGENTALGO_ADMIN_EMAIL: shivhari.lokhande06@gmail.com
           AGENTALGO_ADMIN_PASSWORD: ci-admin-password
         run: python -m pytest tests/ -q
 
