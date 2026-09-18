@@ -7,7 +7,7 @@ const inr = (v: number | null | undefined) =>
 const pnlColor = (v: number | null | undefined) =>
   v == null ? undefined : v >= 0 ? "var(--green)" : "var(--red)";
 
-type Account = "A" | "B" | "C";
+type Account = "A" | "B" | "C" | "D";
 const ACCOUNTS: { id: Account; label: string; blurb: string }[] = [
   { id: "A", label: "A · every signal",
     blurb: "A takes every signal — the unchanged go-live baseline." },
@@ -15,6 +15,8 @@ const ACCOUNTS: { id: Account; label: string; blurb: string }[] = [
     blurb: "B skips signals whose option premium already ran >15% off its 15-min low (EXT rows)." },
   { id: "C", label: "C · risk-guarded",
     blurb: "C runs A's signals behind guards: 2% risk, max 4 trades/day, −3% day stop, one WALL_REJECT per symbol per 30 min, ORB off, and on Hold / NO-TRADE days a wall touch must be fresh (≤2 bars) in a clean tape." },
+  { id: "D", label: "D · hero-zero",
+    blurb: "D buys expiry-day lottery tickets: on a confirmed trend signal (ORB / VWAP) between 13:00–15:00, the far-OTM strike at ₹4–15 with a fixed 1% budget. No SL — premium is the stop; trail 40% off the peak once 2×, else settle at 15:20. Max 2/day. Judge on 20+ tickets, never one." },
 ];
 // why C (or B) stood aside — shown on SKIP pills
 const SKIP_WHY: Record<string, string> = {
@@ -24,6 +26,17 @@ const SKIP_WHY: Record<string, string> = {
   MAX: "max 4 trades/day reached",
   CD: "symbol cooldown — another trade on this index in the last 30 min",
   REG: "range regime — stale wall touch or wide-OR / extended-EMA tape on a Hold day",
+  WIN: "outside the 13:00–15:00 expiry-day window",
+  NOSTK: "no far-OTM strike with a ₹4–15 premium (or budget < 1 lot)",
+  OPEN: "a ticket is already open",
+};
+// D outcomes get their own colours (no SL/TP/TIME semantics there)
+const OUTCOME_STYLE: Record<string, { background: string; color: string }> = {
+  TP: { background: "#def7ec", color: "#03543f" },
+  SL: { background: "#fde8e8", color: "#9b1c1c" },
+  MANUAL: { background: "#ede9fe", color: "#5b21b6" },
+  TRAIL: { background: "#def7ec", color: "#03543f" },
+  EXPIRY: { background: "#fde8e8", color: "#9b1c1c" },
 };
 
 export default function PaperTrade() {
@@ -133,7 +146,11 @@ export default function PaperTrade() {
               <div><div style={{ fontSize: 22, fontWeight: 700 }}>{s.risk_pct}%</div>
                 <div className="l">Risk/trade · pre-registered, fixed for the month</div></div>
             )}
-            {account !== "C" && (
+            {account === "D" && (
+              <div><div style={{ fontSize: 22, fontWeight: 700 }}>1%</div>
+                <div className="l">Budget/ticket · premium is the stop · expiry days only</div></div>
+            )}
+            {account !== "C" && account !== "D" && (
             <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginLeft: "auto" }}>
               <label style={{ fontSize: 12 }}>Capital ₹<br />
                 <input style={{ width: 110 }} value={capEdit}
@@ -200,11 +217,9 @@ export default function PaperTrade() {
                       : t.status === "skipped"
                       ? <span className="pill" style={{ background: "#f3f4f6", color: "#4b5563" }}
                           title={`Skipped — ${SKIP_WHY[t.outcome] ?? t.outcome}`}>SKIP·{t.outcome}</span>
-                      : <span className="pill" style={{
-                          background: t.outcome === "TP" ? "#def7ec" : t.outcome === "SL" ? "#fde8e8"
-                            : t.outcome === "MANUAL" ? "#ede9fe" : "#fdf6b2",
-                          color: t.outcome === "TP" ? "#03543f" : t.outcome === "SL" ? "#9b1c1c"
-                            : t.outcome === "MANUAL" ? "#5b21b6" : "#723b13" }}>
+                      : <span className="pill"
+                          style={OUTCOME_STYLE[t.outcome] ?? { background: "#fdf6b2", color: "#723b13" }}
+                          title={t.peak_p != null && account === "D" ? `peak ₹${t.peak_p}` : undefined}>
                           {t.outcome}</span>}
                     {t.r != null && <span className="muted" style={{ fontSize: 11 }}> {t.r >= 0 ? "+" : ""}{t.r}R</span>}
                   </td>

@@ -53,6 +53,129 @@ C_FRESH_TOUCH_BARS = 2         # range regime: wall touch must be ≤2 bars old
 # Skip codes (stored in `outcome` on status=skipped rows)
 C_SKIP_RULE, C_SKIP_DAYSTOP, C_SKIP_MAX = "RULE", "DAY", "MAX"
 C_SKIP_COOLDOWN, C_SKIP_REGIME = "CD", "REG"
+# Portfolio D (hero-zero, 18-Sep, user's idea): expiry-day lottery tickets,
+# isolated so one 10× can never mask twenty zeros in A/B/C. PRE-REGISTERED:
+#   • expiry day of the instrument only, entries 13:00–15:00 IST
+#   • piggybacks a TREND signal (ORB / VWAP_RECLAIM — a move already confirmed);
+#     WALL_REJECT is a fade, wrong shape for a hero-zero
+#   • buys the far-OTM strike in the signal's direction with premium ₹4–₹15
+#   • fixed budget 1% of capital per ticket, premium IS the stop (no SL)
+#   • exit: once premium ≥ 2× entry, trail 40% off the peak; else settle at
+#     15:20 IST at the live bid (expiry-day illiquidity after that)
+#   • max 2 tickets/day, 1 open at a time
+D_WINDOW_HM = ((13, 0), (15, 0))
+D_SETTLE_HM = (15, 20)
+D_TREND_RULES = ("ORB", "VWAP_RECLAIM")
+D_PREMIUM_MIN, D_PREMIUM_MAX = 4.0, 15.0
+D_BUDGET_PCT = 1.0
+D_ARM_MULT = 2.0          # trailing exit arms at 2× entry
+D_TRAIL_PCT = 40.0        # exit when bid falls 40% off the peak (post-arm)
+D_MAX_TICKETS_DAY = 2
+D_SKIP_NOEXP, D_SKIP_WINDOW, D_SKIP_RULE = "NOEXP", "WIN", "RULE"
+D_SKIP_NOSTRIKE, D_SKIP_MAX, D_SKIP_OPEN = "NOSTK", "MAX", "OPEN"
+
+
+def _expiry_is_today(expiry: str | None, now_ist: datetime) -> bool:
+    """Chain expiry strings look like '22-Sep-2026'."""
+    if not expiry:
+        return False
+    try:
+        return datetime.strptime(expiry, "%d-%b-%Y").date() == now_ist.date()
+    except ValueError:
+        return False
+
+
+def pick_hero_strike(otm_ladder: list[dict], direction: str, spot: float | None) -> dict | None:
+    """Cheapest strike in D's premium band on the correct OTM side of spot —
+    the furthest-out ticket that still has a real market. None when nothing fits."""
+    key = "ce_ltp" if direction == "CE" else "pe_ltp"
+    cands = []
+    for s in otm_ladder or []:
+        p = float(s.get(key) or 0)
+        if not (D_PREMIUM_MIN <= p <= D_PREMIUM_MAX):
+            continue
+        if spot and ((direction == "CE" and s["strike"] <= spot)
+                     or (direction == "PE" and s["strike"] >= spot)):
+            continue  # ITM/ATM — not a hero-zero
+        cands.append((p, s["strike"]))
+    if not cands:
+        return None
+    p, k = min(cands)  # cheapest in band
+    return {"strike": k, "ltp": p}
+
+
+def d_skip_reason(db, user_id: str, sig: dict, snapshot: dict, now_ist: datetime) -> str | None:
+    from .models import ScalpPaperTrade as T
+
+    if not _expiry_is_today(snapshot.get("expiry"), now_ist):
+        return D_SKIP_NOEXP
+    hm = (now_ist.hour, now_ist.minute)
+    if not (D_WINDOW_HM[0] <= hm < D_WINDOW_HM[1]):
+        return D_SKIP_WINDOW
+    if sig["rule"] not in D_TREND_RULES:
+        return D_SKIP_RULE
+    today = now_ist.date().isoformat()
+    rows = (db.query(T).filter(T.user_id == user_id, T.account == "D", T.day == today,
+                               T.status.in_(("open", "closed"))).all())
+    if any(t.status == "open" for t in rows):
+        return D_SKIP_OPEN
+    if len(rows) >= D_MAX_TICKETS_DAY:
+        return D_SKIP_MAX
+    return None
+
+
+def open_hero_zero(user_id: str, sig: dict, signal_id: str | None,
+                   snapshot: dict, cfg: dict) -> str | None:
+    """Portfolio D entry for a just-emitted REAL signal. Records skips with a
+    code only when the day is an expiry day (otherwise silent — every non-expiry
+    signal would be a NOEXP row)."""
+    from .db import SessionLocal
+    from .fno import DEFAULT_LOT_SIZES
+    from .models import ScalpPaperTrade as T
+
+    now_ist = datetime.now(IST)
+    lot = ((sig.get("sizing") or {}).get("lot_size") or DEFAULT_LOT_SIZES.get(sig["symbol"]))
+    if not lot:
+        return None
+    with SessionLocal() as db:
+        skip = d_skip_reason(db, user_id, sig, snapshot, now_ist)
+        if skip == D_SKIP_NOEXP:
+            return None
+        pick = None if skip else pick_hero_strike(snapshot.get("otm_ladder") or [],
+                                                  sig["direction"], snapshot.get("spot"))
+        if not skip and pick is None:
+            skip = D_SKIP_NOSTRIKE
+        base = _base_capital(cfg)
+        common = dict(user_id=user_id, signal_id=signal_id, account="D",
+                      day=now_ist.date().isoformat(), symbol=sig["symbol"], rule=sig["rule"],
+                      direction=sig["direction"], expiry=snapshot.get("expiry"),
+                      spot_entry=snapshot.get("spot"), lot_size=int(lot))
+        if skip:
+            row = T(**common, instrument=sig["instrument"], entry_p=float(sig["ep"]),
+                    sl=0.0, tp=0.0, lots=0, capital_used=0.0, status="skipped", outcome=skip)
+            db.add(row)
+            db.commit()
+            log.info("Paper D SKIP·%s: %s", skip, sig["instrument"])
+            return None
+        ep = float(pick["ltp"])
+        budget = base * D_BUDGET_PCT / 100
+        lots = int(budget // (ep * lot))
+        instrument = f"{sig['symbol']} {pick['strike']:.0f} {sig['direction']}"
+        if lots < 1:
+            row = T(**common, instrument=instrument, entry_p=ep, sl=0.0, tp=0.0, lots=0,
+                    capital_used=0.0, status="skipped", outcome=D_SKIP_NOSTRIKE)
+            db.add(row)
+            db.commit()
+            log.info("Paper D SKIP·NOSTK (₹%.0f budget < 1 lot @ ₹%s): %s", budget, ep, instrument)
+            return None
+        row = T(**common, instrument=instrument, entry_p=ep, sl=0.05,
+                tp=round(ep * D_ARM_MULT, 2), peak_p=ep,
+                lots=lots, capital_used=round(ep * lot * lots, 2))
+        db.add(row)
+        db.commit()
+        log.info("Paper D TICKET %s ×%s lots @ ₹%s (budget ₹%.0f) on %s %s",
+                 instrument, lots, ep, budget, sig["rule"], sig["direction"])
+        return row.id
 #   (30 → 10 on day 1: a PE waterfall crossed the SL between two 30s polls and
 #   filled −1.19R instead of ~−1R. 10s watches like an attentive human; a real
 #   resting SL-M order would still be a touch faster.)
@@ -329,6 +452,37 @@ def manual_exit(user_id: str, trade_id: str) -> dict:
                 "r": t.r_multiple, "outcome": t.outcome}
 
 
+def _resolve_hero_zero(db, t, bid: float | None, now_ist: datetime) -> bool:
+    """D's exit rules. Returns True when the row was closed this pass.
+
+    No SL — the premium is the stop. Track the peak; once it reaches
+    D_ARM_MULT × entry, exit when the bid falls D_TRAIL_PCT off the peak
+    ('TRAIL'). Otherwise settle at D_SETTLE_HM on the live bid ('EXPIRY');
+    if no quote is available by the close, the ticket expires worthless.
+    """
+    hm = (now_ist.hour, now_ist.minute)
+    if bid:
+        t.peak_p = max(float(t.peak_p or t.entry_p), float(bid))
+        armed = t.peak_p >= t.entry_p * D_ARM_MULT
+        if armed and bid <= t.peak_p * (1 - D_TRAIL_PCT / 100):
+            _close(db, t, bid, "TRAIL", "kite")
+            t.status = "closed"
+            return True
+        if hm >= D_SETTLE_HM:
+            _close(db, t, bid, "EXPIRY", "kite")
+            t.status = "closed"
+            return True
+        return False
+    # no live quote: after the session ends the ticket is worth its floor
+    from .fno import is_market_hours_ist
+
+    if not is_market_hours_ist(now_ist) and now_ist.date().isoformat() >= t.day:
+        _close(db, t, 0.05, "EXPIRY", "modeled")
+        t.status = "closed"
+        return True
+    return False
+
+
 async def paper_trade_sweep() -> int:
     """One monitor pass: resolve open paper trades. Returns closes made."""
     from .db import SessionLocal
@@ -353,7 +507,10 @@ async def paper_trade_sweep() -> int:
                 except Exception:  # noqa: BLE001
                     quote = None
             bid = quote.get("bid") or quote.get("last_price") if quote else None
-            if bid and age_min >= SCALP_TIME_STOP_MIN + LATE_SETTLE_GRACE_MIN:
+            if t.account == "D":
+                if not _resolve_hero_zero(db, t, bid, now_ist):
+                    continue
+            elif bid and age_min >= SCALP_TIME_STOP_MIN + LATE_SETTLE_GRACE_MIN:
                 # quote arrived well past the window (feed was down): the live
                 # bid is NOT the fill the rule would have gotten — settle by
                 # replay; only if replay is impossible fall back to the bid
@@ -431,6 +588,7 @@ def paper_trades_summary(user_id: str, days: int = 35, account: str = "A") -> di
                 "pnl": t.pnl, "outcome": t.outcome, "r": t.r_multiple,
                 "status": t.status, "exit_source": t.exit_source,
                 "equity_after": t.equity_after, "runup_pct": t.runup_pct,
+                "peak_p": t.peak_p,
             })
     closed = [r for r in out_rows if r["status"] == "closed"]
     wins = sum(1 for r in closed if (r["pnl"] or 0) > 0)
@@ -449,6 +607,14 @@ def paper_trades_summary(user_id: str, days: int = 35, account: str = "A") -> di
               f"direction), {'/'.join(sorted(C_DISABLED_RULES))} disabled, and on "
               f"Hold / NO-TRADE days a WALL_REJECT needs a clean tape and a touch "
               f"≤{C_FRESH_TOUCH_BARS} bars old. Skip codes: RULE, DAY, MAX, CD, REG.")
+    note_d = (f"Hero-zero portfolio D: expiry days only, {D_WINDOW_HM[0][0]:02d}:00–"
+              f"{D_WINDOW_HM[1][0]:02d}:00 IST, piggybacks a confirmed TREND signal "
+              f"({'/'.join(D_TREND_RULES)}) and buys the far-OTM strike at ₹{D_PREMIUM_MIN:.0f}–"
+              f"₹{D_PREMIUM_MAX:.0f} with a fixed {D_BUDGET_PCT:.0f}% budget. No SL — the premium is "
+              f"the stop. Exit: trail {D_TRAIL_PCT:.0f}% off the peak once ≥{D_ARM_MULT:.0f}× "
+              f"(TRAIL), else settle at {D_SETTLE_HM[0]}:{D_SETTLE_HM[1]:02d} (EXPIRY). Max "
+              f"{D_MAX_TICKETS_DAY}/day. A lottery by design — judge it on 20+ tickets, never on "
+              f"one. Skip codes: WIN, RULE, NOSTK, MAX, OPEN.")
     skipped_by = {}
     for r in out_rows:
         if r["status"] == "skipped":
@@ -469,6 +635,6 @@ def paper_trades_summary(user_id: str, days: int = 35, account: str = "A") -> di
             "total_charges": round(sum(r["charges"] or 0 for r in closed), 2),
             "sum_r": round(sum(r["r"] or 0 for r in closed), 2),
             "max_concurrent": MAX_CONCURRENT,
-            "note": {"B": note_b, "C": note_c}.get(account, note_a),
+            "note": {"B": note_b, "C": note_c, "D": note_d}.get(account, note_a),
         },
     }

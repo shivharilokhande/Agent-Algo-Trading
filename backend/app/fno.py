@@ -185,6 +185,11 @@ def analyze_chain(records: dict, symbol: str) -> dict:
         "max_pain": compute_max_pain(strikes),
         "resistance_strikes": [{"strike": s["strike"], "ce_oi": s["ce_oi"]} for s in resistance],
         "support_strikes": [{"strike": s["strike"], "pe_oi": s["pe_oi"]} for s in support],
+        # far-OTM candidates for paper account D (hero-zero): every strike with a
+        # live premium on either side; D filters by its own price band
+        "otm_ladder": [{"strike": s["strike"], "ce_ltp": s["ce_ltp"], "pe_ltp": s["pe_ltp"]}
+                       for s in sorted(strikes, key=lambda s: s["strike"])
+                       if (s["ce_ltp"] or 0) > 0 or (s["pe_ltp"] or 0) > 0],
         "atm_iv_ce": atm["ce_iv"] if atm else None,
         "atm_iv_pe": atm["pe_iv"] if atm else None,
         "strike_count": len(strikes),

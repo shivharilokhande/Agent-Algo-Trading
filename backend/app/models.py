@@ -335,6 +335,7 @@ class ScalpPaperTrade(Base):
     # % the option premium ran (window low → price) in the 15 min before entry;
     # logged on BOTH accounts when computable, None when Kite couldn't say
     runup_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    peak_p: Mapped[float | None] = mapped_column(Float, nullable=True)  # D: trailing exit
     signal_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     day: Mapped[str] = mapped_column(String(10), index=True)      # IST date
     symbol: Mapped[str] = mapped_column(String(24))

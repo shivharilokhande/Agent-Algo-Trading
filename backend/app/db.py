@@ -65,6 +65,8 @@ def _migrate() -> None:
         # Paper Trade B: shadow portfolio + premium run-up logging
         "ALTER TABLE scalp_paper_trades ADD COLUMN account VARCHAR(1) NOT NULL DEFAULT 'A'",
         "ALTER TABLE scalp_paper_trades ADD COLUMN runup_pct FLOAT",
+        # Paper Trade D (hero-zero): peak premium for the trailing exit
+        "ALTER TABLE scalp_paper_trades ADD COLUMN peak_p FLOAT",
     ]
     with engine.begin() as conn:
         for stmt in migrations:

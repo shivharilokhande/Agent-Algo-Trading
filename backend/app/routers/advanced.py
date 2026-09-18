@@ -422,8 +422,8 @@ def scalp_paper_trades(
 
     if not 1 <= days <= 90:
         raise HTTPException(status_code=422, detail="days must be 1–90")
-    if account not in ("A", "B", "C"):
-        raise HTTPException(status_code=422, detail="account must be A, B or C")
+    if account not in ("A", "B", "C", "D"):
+        raise HTTPException(status_code=422, detail="account must be A, B, C or D")
     return paper_trades_summary(user.id, days, account=account)
 
 

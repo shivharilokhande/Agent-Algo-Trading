@@ -563,6 +563,13 @@ async def scalp_sweep() -> int:
                                                     rid, snapshot.get("expiry"), cfg)
                         except Exception:  # noqa: BLE001
                             log.exception("Paper trade open failed")
+                        try:  # paper D: expiry-day hero-zero ticket (isolated)
+                            from .paper_trade import open_hero_zero
+
+                            await asyncio.to_thread(open_hero_zero, user_id, sig, rid,
+                                                    snapshot, cfg)
+                        except Exception:  # noqa: BLE001
+                            log.exception("Paper D open failed")
     return emitted
 
 
