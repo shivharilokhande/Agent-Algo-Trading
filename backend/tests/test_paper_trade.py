@@ -148,7 +148,10 @@ async def test_late_quote_settles_by_replay(client, auth, monkeypatch):
                         lambda t, now: (88.95, "TIME", rule_exit))
     await paper_trade_sweep()
     with SessionLocal() as db:
-        for t in db.query(ScalpPaperTrade).filter(ScalpPaperTrade.user_id == uid).all():
+        rows = (db.query(ScalpPaperTrade).filter(ScalpPaperTrade.user_id == uid,
+                                                 ScalpPaperTrade.lots > 0).all())
+        assert len(rows) == 2  # A + B twin (C skips ORB by design)
+        for t in rows:
             assert t.status == "closed" and t.outcome == "TIME"
             assert t.exit_p == 88.95 and t.exit_source == "modeled"
             # exit_at = the RULE's exit moment, not the delayed sweep's clock

@@ -7,6 +7,25 @@ const inr = (v: number | null | undefined) =>
 const pnlColor = (v: number | null | undefined) =>
   v == null ? undefined : v >= 0 ? "var(--green)" : "var(--red)";
 
+type Account = "A" | "B" | "C";
+const ACCOUNTS: { id: Account; label: string; blurb: string }[] = [
+  { id: "A", label: "A · every signal",
+    blurb: "A takes every signal — the unchanged go-live baseline." },
+  { id: "B", label: "B · strike-chart checked",
+    blurb: "B skips signals whose option premium already ran >15% off its 15-min low (EXT rows)." },
+  { id: "C", label: "C · risk-guarded",
+    blurb: "C runs A's signals behind guards: 2% risk, max 4 trades/day, −3% day stop, one WALL_REJECT per symbol per 30 min, ORB off, and on Hold / NO-TRADE days a wall touch must be fresh (≤2 bars) in a clean tape." },
+];
+// why C (or B) stood aside — shown on SKIP pills
+const SKIP_WHY: Record<string, string> = {
+  EXT: "premium already extended at signal time",
+  RULE: "rule disabled in C (ORB: no live evidence yet)",
+  DAY: "day loss stop hit (−3% of open-of-day equity)",
+  MAX: "max 4 trades/day reached",
+  CD: "symbol cooldown — another trade on this index in the last 30 min",
+  REG: "range regime — stale wall touch or wide-OR / extended-EMA tape on a Hold day",
+};
+
 export default function PaperTrade() {
   const [data, setData] = useState<any>(null);
   const [err, setErr] = useState("");
@@ -14,9 +33,9 @@ export default function PaperTrade() {
   const [riskEdit, setRiskEdit] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [loadedOnce, setLoadedOnce] = useState(false);
-  const [account, setAccount] = useState<"A" | "B">("A");
+  const [account, setAccount] = useState<Account>("A");
 
-  async function load(acct: "A" | "B" = account) {
+  async function load(acct: Account = account) {
     try {
       const d = await api.get<any>(`/api/scalp/paper-trades?days=35&account=${acct}`);
       setData(d);
@@ -66,24 +85,23 @@ export default function PaperTrade() {
     <div className="scalp-page">
       <h1>Paper Trade</h1>
       <p className="muted">
-        Every real scalp signal is executed here as a paper trade in one portfolio account
-        (base capital = your trading capital setting, max {s?.max_concurrent ?? 2} open at once).
+        Every real scalp signal is executed here as a paper trade in three parallel accounts
+        (same base capital, max {s?.max_concurrent ?? 2} open at once each) so the month-end
+        A/B/C comparison can attribute every rupee to one filter.
         Entries use the real quoted premium; exits fill on the <b>real Kite bid</b> the moment
         SL / TP / the 20-minute stop triggers (marked "modeled" when the broker session was down).
         Exact Zerodha charges. No real orders — this is the 30-day evidence for the go-live decision.
       </p>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        {(["A", "B"] as const).map((a) => (
-          <button key={a} className={account === a ? undefined : "secondary"}
-            onClick={() => setAccount(a)}>
-            {a === "A" ? "A · every signal" : "B · strike-chart checked"}
+        {ACCOUNTS.map((a) => (
+          <button key={a.id} className={account === a.id ? undefined : "secondary"}
+            onClick={() => setAccount(a.id)}>
+            {a.label}
           </button>
         ))}
         <span className="muted" style={{ fontSize: 12, alignSelf: "center" }}>
-          {account === "B"
-            ? "B skips signals whose option premium already ran >15% off its 15-min low (EXT rows)."
-            : "A takes every signal — the unchanged go-live baseline."}
+          {ACCOUNTS.find((a) => a.id === account)?.blurb}
         </span>
       </div>
 
@@ -102,10 +120,20 @@ export default function PaperTrade() {
               <div className="l">WIN rate ({s.wins}/{s.n_closed} net-profitable) · {s.sum_r >= 0 ? "+" : ""}{s.sum_r}R</div></div>
             <div><div style={{ fontSize: 22, fontWeight: 700 }}>{s.open}</div>
               <div className="l">Open position{s.open === 1 ? "" : "s"}</div></div>
-            {account === "B" && (
+            {account !== "A" && (
               <div><div style={{ fontSize: 22, fontWeight: 700 }}>{s.skipped ?? 0}</div>
-                <div className="l">Skipped (extended)</div></div>
+                <div className="l">
+                  Skipped{account === "B" ? " (extended)" : ""}
+                  {account === "C" && s.skipped_by && Object.keys(s.skipped_by).length > 0 && (
+                    <> · {Object.entries(s.skipped_by).map(([k, n]) => `${k} ${n}`).join(" · ")}</>
+                  )}
+                </div></div>
             )}
+            {account === "C" && (
+              <div><div style={{ fontSize: 22, fontWeight: 700 }}>{s.risk_pct}%</div>
+                <div className="l">Risk/trade · pre-registered, fixed for the month</div></div>
+            )}
+            {account !== "C" && (
             <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginLeft: "auto" }}>
               <label style={{ fontSize: 12 }}>Capital ₹<br />
                 <input style={{ width: 110 }} value={capEdit}
@@ -116,6 +144,7 @@ export default function PaperTrade() {
               <button className="secondary" disabled={saving || !capOk || !riskOk}
                 onClick={saveAccount}>{saving ? "Saving…" : "Save"}</button>
             </div>
+            )}
           </div>
           {(!capOk || !riskOk) && (
             <p className="muted" style={{ fontSize: 11, marginTop: 6 }}>
@@ -170,7 +199,7 @@ export default function PaperTrade() {
                         </>
                       : t.status === "skipped"
                       ? <span className="pill" style={{ background: "#f3f4f6", color: "#4b5563" }}
-                          title="Skipped — premium already extended at signal time">SKIP·EXT</span>
+                          title={`Skipped — ${SKIP_WHY[t.outcome] ?? t.outcome}`}>SKIP·{t.outcome}</span>
                       : <span className="pill" style={{
                           background: t.outcome === "TP" ? "#def7ec" : t.outcome === "SL" ? "#fde8e8"
                             : t.outcome === "MANUAL" ? "#ede9fe" : "#fdf6b2",

@@ -417,13 +417,13 @@ def scalp_paper_trades(
     account: str = "A",
 ):
     """Live paper-trading desk: backtest-style rows + portfolio summary.
-    account=A: baseline (every signal); account=B: run-up-gated shadow."""
+    account=A: baseline (every signal); B: run-up-gated shadow; C: risk-guarded shadow."""
     from ..paper_trade import paper_trades_summary
 
     if not 1 <= days <= 90:
         raise HTTPException(status_code=422, detail="days must be 1–90")
-    if account not in ("A", "B"):
-        raise HTTPException(status_code=422, detail="account must be A or B")
+    if account not in ("A", "B", "C"):
+        raise HTTPException(status_code=422, detail="account must be A, B or C")
     return paper_trades_summary(user.id, days, account=account)
 
 

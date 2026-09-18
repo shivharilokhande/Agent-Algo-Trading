@@ -39,6 +39,20 @@ B_RUNUP_WINDOW_MIN = 15
 # poll jitter). The 11:42 trade got +4.11R from a 20-min-late quote; the
 # rule-faithful result was a −0.76R time stop.
 LATE_SETTLE_GRACE_MIN = 2
+# Portfolio C (shadow, 18-Sep): A's signals behind the risk guards proposed
+# after the 18-Sep chop day (8 trades / −₹7.6k / an accidental PE+CE straddle
+# 2 min apart). PRE-REGISTERED for the month; each skip is recorded with WHY
+# (outcome code) so the A/B/C comparison can attribute every rupee.
+C_RISK_PCT = 2.0               # vs A/B's setting (7.5% at the time) — 3 SLs ≠ −22%
+C_MAX_TRADES_DAY = 4           # trades 3–4 were the worst live bucket; 5+ is noise
+C_DAY_LOSS_STOP_PCT = 3.0      # today's realised loss ≥ 3% of open-of-day equity
+C_SYMBOL_COOLDOWN_MIN = 30     # WALL_REJECT: one trade per SYMBOL per 30 min (any
+#                                direction) — kills the PE/CE ping-pong + straddle
+C_DISABLED_RULES = {"ORB"}     # 0 TP in 8 live trades, −₹5.6k — no evidence yet
+C_FRESH_TOUCH_BARS = 2         # range regime: wall touch must be ≤2 bars old
+# Skip codes (stored in `outcome` on status=skipped rows)
+C_SKIP_RULE, C_SKIP_DAYSTOP, C_SKIP_MAX = "RULE", "DAY", "MAX"
+C_SKIP_COOLDOWN, C_SKIP_REGIME = "CD", "REG"
 #   (30 → 10 on day 1: a PE waterfall crossed the SL between two 30s polls and
 #   filled −1.19R instead of ~−1R. 10s watches like an attentive human; a real
 #   resting SL-M order would still be a touch faster.)
@@ -89,10 +103,51 @@ def _signal_runup(sig: dict, expiry: str | None) -> float | None:
         return None
 
 
+def c_skip_reason(db, user_id: str, sig: dict, base: float,
+                  now_utc: datetime | None = None) -> str | None:
+    """Portfolio C's guards, in order. Returns a skip code or None (= take it).
+
+    Pure DB + signal logic so it is unit-testable without a market feed.
+    """
+    from .models import ScalpPaperTrade as T
+
+    now_utc = now_utc or datetime.now(timezone.utc).replace(tzinfo=None)
+    today = datetime.now(IST).date().isoformat()
+    if sig["rule"] in C_DISABLED_RULES:
+        return C_SKIP_RULE
+    taken = (db.query(T).filter(T.user_id == user_id, T.account == "C",
+                                T.day == today, T.status.in_(("open", "closed")))
+             .all())
+    # day loss stop: today's realised P&L vs equity at the open of the day
+    closed_before = sum(t.pnl or 0.0 for t in db.query(T)
+                        .filter(T.user_id == user_id, T.account == "C",
+                                T.status == "closed", T.day < today).all())
+    open_of_day = base + closed_before
+    today_pnl = sum(t.pnl or 0.0 for t in taken if t.status == "closed")
+    if open_of_day > 0 and today_pnl <= -open_of_day * C_DAY_LOSS_STOP_PCT / 100:
+        return C_SKIP_DAYSTOP
+    if len(taken) >= C_MAX_TRADES_DAY:
+        return C_SKIP_MAX
+    if sig["rule"] == "WALL_REJECT":
+        cutoff = now_utc - timedelta(minutes=C_SYMBOL_COOLDOWN_MIN)
+        if any(t.symbol == sig["symbol"] and t.created_at >= cutoff for t in taken):
+            return C_SKIP_COOLDOWN
+        # range regime (PM said Hold / NO TRADE NOW, or no run today): the
+        # reject must be a FRESH touch in a clean tape — no chasing a stale
+        # touch through a wide-OR / extended-EMA day
+        if sig.get("day_bias") in (None, "Hold"):
+            fresh = (sig.get("touch_age") is not None
+                     and sig["touch_age"] <= C_FRESH_TOUCH_BARS)
+            if not (sig.get("quality_ok") and fresh):
+                return C_SKIP_REGIME
+    return None
+
+
 def _open_account_trade(db, user_id: str, sig: dict, signal_id: str | None,
                         expiry: str | None, cfg: dict, account: str,
                         runup: float | None) -> str | None:
-    """One account's entry decision for a signal (A: always; B: run-up gate)."""
+    """One account's entry decision for a signal (A: always; B: run-up gate;
+    C: risk guards — see c_skip_reason)."""
     from .fno import DEFAULT_LOT_SIZES, size_position
     from .models import ScalpPaperTrade as T
 
@@ -107,14 +162,20 @@ def _open_account_trade(db, user_id: str, sig: dict, signal_id: str | None,
                   instrument=sig["instrument"], expiry=expiry,
                   spot_entry=sig.get("spot"), delta=sig.get("delta"),
                   entry_p=ep, sl=sl, tp=tp, lot_size=int(lot))
+    skip = None
     if account == "B" and runup is not None and runup > B_RUNUP_MAX_PCT:
-        # too extended — B stands aside, and records WHY for the month-end audit
+        skip = "EXT"  # too extended — B stands aside
+    elif account == "C":
+        skip = c_skip_reason(db, user_id, sig, _base_capital(cfg))
+    if skip:
+        # stand aside, and record WHY for the month-end audit
         row = T(**common, lots=0, capital_used=0.0, status="skipped",
-                outcome="EXT", exit_source=None)
+                outcome=skip, exit_source=None)
         db.add(row)
         db.commit()
-        log.info("Paper B SKIP (runup %.1f%% > %s%%): %s",
-                 runup, B_RUNUP_MAX_PCT, sig["instrument"])
+        log.info("Paper %s SKIP·%s (runup %s, bias %s, quality %s, touch_age %s): %s",
+                 account, skip, runup, sig.get("day_bias"), sig.get("quality_ok"),
+                 sig.get("touch_age"), sig["instrument"])
         return None
     open_n = (db.query(T).filter(T.user_id == user_id, T.account == account,
                                  T.status == "open").count())
@@ -124,7 +185,8 @@ def _open_account_trade(db, user_id: str, sig: dict, signal_id: str | None,
         return None
     equity, reserved = _equity(db, user_id, _base_capital(cfg), account)
     avail = equity - reserved
-    sizing = size_position(ep, sl, int(lot), avail, _paper_risk_pct(cfg))
+    risk_pct = C_RISK_PCT if account == "C" else _paper_risk_pct(cfg)
+    sizing = size_position(ep, sl, int(lot), avail, risk_pct)
     lots = sizing.get("lots") or 0
     if lots < 1:
         log.info("Paper %s skipped (unaffordable at avail ₹%.0f): %s",
@@ -141,17 +203,18 @@ def _open_account_trade(db, user_id: str, sig: dict, signal_id: str | None,
 def open_paper_trade(user_id: str, sig: dict, signal_id: str | None,
                      expiry: str | None, cfg: dict) -> str | None:
     """Open the paper trades for a just-emitted REAL signal: portfolio A
-    (every signal — unchanged baseline) and shadow portfolio B (premium
-    run-up gate). Returns A's trade id (None when A skipped)."""
+    (every signal — unchanged baseline), shadow B (premium run-up gate) and
+    shadow C (risk guards). Returns A's trade id (None when A skipped)."""
     from .db import SessionLocal
 
-    runup = _signal_runup(sig, expiry)  # one Kite lookup, logged on both
+    runup = _signal_runup(sig, expiry)  # one Kite lookup, logged on all three
     with SessionLocal() as db:
         rid = _open_account_trade(db, user_id, sig, signal_id, expiry, cfg, "A", runup)
-        try:
-            _open_account_trade(db, user_id, sig, signal_id, expiry, cfg, "B", runup)
-        except Exception:  # noqa: BLE001 — B must never break A
-            log.exception("Paper B open failed")
+        for shadow in ("B", "C"):
+            try:
+                _open_account_trade(db, user_id, sig, signal_id, expiry, cfg, shadow, runup)
+            except Exception:  # noqa: BLE001 — a shadow must never break A
+                log.exception("Paper %s open failed", shadow)
         return rid
 
 
@@ -379,20 +442,33 @@ def paper_trades_summary(user_id: str, days: int = 35, account: str = "A") -> di
               f"{B_RUNUP_WINDOW_MIN}-min low ('EXT' rows). Same capital, risk "
               f"and exits as A — the month-end A/B comparison decides whether "
               f"the run-up gate goes live.")
+    note_c = (f"Shadow portfolio C: identical signals behind risk guards — "
+              f"{C_RISK_PCT:.0f}% risk/trade, max {C_MAX_TRADES_DAY} trades/day, "
+              f"day stop at −{C_DAY_LOSS_STOP_PCT:.0f}% of open-of-day equity, "
+              f"one WALL_REJECT per symbol per {C_SYMBOL_COOLDOWN_MIN} min (any "
+              f"direction), {'/'.join(sorted(C_DISABLED_RULES))} disabled, and on "
+              f"Hold / NO-TRADE days a WALL_REJECT needs a clean tape and a touch "
+              f"≤{C_FRESH_TOUCH_BARS} bars old. Skip codes: RULE, DAY, MAX, CD, REG.")
+    skipped_by = {}
+    for r in out_rows:
+        if r["status"] == "skipped":
+            skipped_by[r["outcome"]] = skipped_by.get(r["outcome"], 0) + 1
     return {
         "rows": out_rows,
         "summary": {
             "account": account,
-            "base_capital": base, "risk_pct": _paper_risk_pct(cfg),
+            "base_capital": base,
+            "risk_pct": C_RISK_PCT if account == "C" else _paper_risk_pct(cfg),
             "equity": equity, "reserved": reserved,
             "open": sum(1 for r in out_rows if r["status"] == "open"),
             "skipped": sum(1 for r in out_rows if r["status"] == "skipped"),
+            "skipped_by": skipped_by,
             "n_closed": len(closed), "wins": wins,
             "win_pct": round(wins / len(closed) * 100, 1) if closed else None,
             "net_pnl": round(sum(r["pnl"] or 0 for r in closed), 2),
             "total_charges": round(sum(r["charges"] or 0 for r in closed), 2),
             "sum_r": round(sum(r["r"] or 0 for r in closed), 2),
             "max_concurrent": MAX_CONCURRENT,
-            "note": note_b if account == "B" else note_a,
+            "note": {"B": note_b, "C": note_c}.get(account, note_a),
         },
     }

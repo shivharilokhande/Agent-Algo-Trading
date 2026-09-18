@@ -178,14 +178,22 @@ def evaluate_rules(bars: list[dict], oi_walls: dict | None = None) -> list[dict]
     if oi_walls:
         res, sup = oi_walls.get("resistance"), oi_walls.get("support")
         band = spot * 0.0015
-        recent_high = max(b["h"] for b in bars[-5:])
-        recent_low = min(b["l"] for b in bars[-5:])
+        last5 = bars[-5:]
+        recent_high = max(b["h"] for b in last5)
+        recent_low = min(b["l"] for b in last5)
+        # touch_age: completed bars since the wall touch (0 = the latest bar).
+        # Paper account C uses it — a WALL_REJECT that keeps re-firing on a
+        # 4-bar-old touch is the chop pattern that bled 18-Sep.
+        hi_age = len(last5) - 1 - max(i for i, b in enumerate(last5) if b["h"] == recent_high)
+        lo_age = len(last5) - 1 - max(i for i, b in enumerate(last5) if b["l"] == recent_low)
         if res and abs(recent_high - res) <= band and spot < recent_high and not trend_up:
-            out.append({"rule": "WALL_REJECT", "direction": "PE",
+            out.append({"rule": "WALL_REJECT", "direction": "PE", "touch_age": hi_age,
                         "why": f"rejected {res:.0f} CE OI wall (high {recent_high:.1f}, spot {spot:.1f})"})
         if sup and abs(recent_low - sup) <= band and spot > recent_low and not trend_dn:
-            out.append({"rule": "WALL_REJECT", "direction": "CE",
+            out.append({"rule": "WALL_REJECT", "direction": "CE", "touch_age": lo_age,
                         "why": f"bounced off {sup:.0f} PE OI wall (low {recent_low:.1f}, spot {spot:.1f})"})
+    for h in out:  # regime context for the paper-C gate (A/B ignore it)
+        h["quality_ok"] = quality_ok
     return out
 
 
@@ -252,6 +260,9 @@ def build_scalp_signal(symbol: str, rule_hit: dict, snapshot: dict,
         "spot": snapshot.get("spot"),
         "why": rule_hit["why"],
         "sizing": sizing,
+        # regime context (paper account C gate; informational for A/B)
+        "quality_ok": rule_hit.get("quality_ok"),
+        "touch_age": rule_hit.get("touch_age"),
     }
     if settings_cfg.get("scalp_exit_policy") == "G":
         sig.update({
@@ -521,6 +532,7 @@ async def scalp_sweep() -> int:
                     continue
                 sig = build_scalp_signal(symbol, hit, snapshot, cfg)
                 if sig:
+                    sig["day_bias"] = bias  # today's PM verdict (None = no run)
                     try:  # broker-grade premium when a Kite session is live
                         from .kite_data import refine_signal_with_kite
 
