@@ -100,6 +100,33 @@ def compute_max_pain(strikes: list[dict]) -> float | None:
     return best_strike
 
 
+WALL_BAND_PCT = 1.5   # walls must be within ±1.5% of spot to matter intraday
+
+
+def pick_walls(strikes: list[dict], spot: float | None) -> tuple[list[dict], list[dict]]:
+    """Top-3 CE-OI strikes AT/ABOVE spot (resistance) and top-3 PE-OI strikes
+    AT/BELOW spot (support), each within ±WALL_BAND_PCT of spot.
+
+    18-Sep fix: the old whole-chain top-OI pick returned BANKNIFTY walls of
+    58000/57500 with spot 56330 (monthly far-OTM writing) and NIFTY
+    resistance == support == 23300 (max-pain strike carrying both books) —
+    neither is a level price can reject intraday. Falls back to the whole
+    side, then the whole chain, when the band is empty (thin / test chains).
+    """
+    if not strikes:
+        return [], []
+    if not spot:
+        return (sorted(strikes, key=lambda s: -s["ce_oi"])[:3],
+                sorted(strikes, key=lambda s: -s["pe_oi"])[:3])
+    band = spot * WALL_BAND_PCT / 100
+    above = [s for s in strikes if s["strike"] >= spot]
+    below = [s for s in strikes if s["strike"] <= spot]
+    near_above = [s for s in above if s["strike"] - spot <= band] or above or strikes
+    near_below = [s for s in below if spot - s["strike"] <= band] or below or strikes
+    return (sorted(near_above, key=lambda s: -s["ce_oi"])[:3],
+            sorted(near_below, key=lambda s: -s["pe_oi"])[:3])
+
+
 def analyze_chain(records: dict, symbol: str) -> dict:
     """Reduce NSE option-chain JSON to decision-relevant analytics.
 
@@ -126,8 +153,7 @@ def analyze_chain(records: dict, symbol: str) -> dict:
     total_ce = sum(s["ce_oi"] for s in strikes)
     total_pe = sum(s["pe_oi"] for s in strikes)
     pcr = round(total_pe / total_ce, 3) if total_ce else None
-    resistance = sorted(strikes, key=lambda s: -s["ce_oi"])[:3]
-    support = sorted(strikes, key=lambda s: -s["pe_oi"])[:3]
+    resistance, support = pick_walls(strikes, spot)
     atm = min(strikes, key=lambda s: abs(s["strike"] - spot)) if (spot and strikes) else None
     # nearest-ATM ladder with live premiums + computed Greeks
     near_atm = sorted(strikes, key=lambda s: abs(s["strike"] - (spot or 0)))[:7]

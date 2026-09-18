@@ -70,6 +70,31 @@ def test_max_pain_and_chain_analytics():
     assert "Max Pain" in md and "Put/Call Ratio" in md and "not trading advice" in md
 
 
+def test_pick_walls_near_spot():
+    """18-Sep: walls are the heaviest OI near spot on the correct SIDE, not the
+    whole chain's max — BANKNIFTY 58000/57500 with spot 56330 was not a wall."""
+    from app.fno import pick_walls
+
+    bn = [{"strike": k, "ce_oi": 100, "pe_oi": 100} for k in range(55000, 58500, 100)]
+    # far-OTM monthly writing dominates the whole chain …
+    next(s for s in bn if s["strike"] == 58000)["ce_oi"] = 900_000
+    next(s for s in bn if s["strike"] == 57500)["pe_oi"] = 900_000
+    # … but the intraday walls are the heavy strikes just around spot
+    next(s for s in bn if s["strike"] == 56500)["ce_oi"] = 50_000
+    next(s for s in bn if s["strike"] == 56200)["pe_oi"] = 40_000
+    res, sup = pick_walls(bn, 56330.0)
+    assert res[0]["strike"] == 56500 and sup[0]["strike"] == 56200
+    # a strike carrying both books (NIFTY 23300 max-pain) can only be ONE side
+    nf = [{"strike": k, "ce_oi": 100, "pe_oi": 100} for k in range(23000, 23700, 50)]
+    pin = next(s for s in nf if s["strike"] == 23300)
+    pin["ce_oi"] = pin["pe_oi"] = 500_000
+    res, sup = pick_walls(nf, 23326.0)
+    assert sup[0]["strike"] == 23300 and res[0]["strike"] >= 23350
+    # empty band → falls back to the side, then the chain
+    res, sup = pick_walls(nf, 30000.0)
+    assert sup[0]["strike"] == 23300 and res  # nothing above → whole chain
+
+
 def test_index_run_with_fno_context(client, auth, monkeypatch):
     """A NIFTY demo run embeds the (mocked) live chain into its reports."""
     from app import fno

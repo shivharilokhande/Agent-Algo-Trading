@@ -89,6 +89,15 @@ async def _fetch_returns(ticker: str, benchmark: str, start: str) -> tuple[float
     closed-market days.
     """
 
+    # pre-alias rows (e.g. a 4-Sep demo entry stored as "NIFTY") must resolve
+    # against the yfinance symbol, else the 6-hourly sweep 404s on them forever
+    try:
+        from ..tickers import normalize_ticker
+
+        ticker = normalize_ticker(ticker)
+    except ValueError:
+        pass  # let yfinance report the bad symbol as before
+
     def _both() -> tuple[float, float]:
         import yfinance as yf
 
