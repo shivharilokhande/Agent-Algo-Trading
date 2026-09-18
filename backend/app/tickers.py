@@ -29,7 +29,9 @@ BENCHMARK_MAP = {
     "": "SPY",          # US default
 }
 
-_TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-\^]{0,15}$")
+# Optional leading "^" so an already-normalized index ("^NSEI") round-trips:
+# schedules/triggers store normalized tickers and re-validate when they fire.
+_TICKER_RE = re.compile(r"^\^?[A-Z0-9][A-Z0-9.\-\^]{0,15}$")
 # path-traversal hardening (engine parity: safe_ticker_component)
 _SAFE_COMPONENT_RE = re.compile(r"^[A-Z0-9.\-\^]+$")
 

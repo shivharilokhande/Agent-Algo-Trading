@@ -8,6 +8,10 @@ def test_index_aliases_and_asset_type():
     assert normalize_ticker("nifty") == "^NSEI"
     assert normalize_ticker("BANKNIFTY") == "^NSEBANK"
     assert normalize_ticker("SENSEX") == "^BSESN"
+    # Idempotent on already-normalized indices — schedules and triggers store
+    # "^NSEI" and re-validate on fire; this rejected every scheduled F&O run.
+    assert normalize_ticker("^NSEI") == "^NSEI"
+    assert normalize_ticker("^nsebank") == "^NSEBANK"
     assert detect_asset_type("^NSEI") == "index"
     assert filter_analysts_for_asset_type(["market", "news", "fundamentals"], "index") == ["market", "news"]
 
