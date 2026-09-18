@@ -98,9 +98,9 @@ export default function PaperTrade() {
     <div className="scalp-page">
       <h1>Paper Trade</h1>
       <p className="muted">
-        Every real scalp signal is executed here as a paper trade in three parallel accounts
+        Every real scalp signal is executed here as a paper trade in four parallel accounts
         (same base capital, max {s?.max_concurrent ?? 2} open at once each) so the month-end
-        A/B/C comparison can attribute every rupee to one filter.
+        A/B/C/D comparison can attribute every rupee to one filter.
         Entries use the real quoted premium; exits fill on the <b>real Kite bid</b> the moment
         SL / TP / the 20-minute stop triggers (marked "modeled" when the broker session was down).
         Exact Zerodha charges. No real orders — this is the 30-day evidence for the go-live decision.
