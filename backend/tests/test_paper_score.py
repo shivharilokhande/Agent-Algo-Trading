@@ -58,16 +58,21 @@ def test_score_day_and_summary(client, auth, monkeypatch):
                            instrument="NIFTY 24000 CE",
                            payload_json=json.dumps({"ep": 100.0}), simulated=True,
                            created_at=created_utc))  # simulated → never scored
+        db.add(ScalpSignal(user_id=uid, symbol="NIFTY", rule="WALL_REJECT", direction="PE",
+                           instrument="NIFTY 24000 PE",
+                           payload_json=json.dumps({"ep": 100.0, "voided": "PIN_BUG"}),
+                           simulated=False, created_at=created_utc))  # voided → kept, not scored
         db.commit()
 
     rally = _bars(day, [24000 + 15 * i for i in range(10)])
     monkeypatch.setattr("app.backtest.fetch_history_sessions",
                         lambda sym, days=8: {day: rally})
-    assert score_day(day) == 1          # real one scored, sim ignored
+    assert score_day(day) == 1          # real one scored; sim and voided ignored
     assert score_day(day) == 0          # idempotent
 
     s = paper_summary(uid, days=7)
     assert s["total"]["n"] == 1 and s["total"]["wins"] == 1
+    assert s["unscored"] == 0           # the voided row is not "pending" either
     assert s["total"]["win_pct"] == 100.0 and s["total"]["sum_r"] == 1.5
     assert s["wall_reject"]["n"] == 1 and s["wall_reject"]["win_pct"] == 100.0
     assert s["days"][0]["day"] == day and s["days"][0]["signals"][0]["outcome"] == "TP"

@@ -23,6 +23,12 @@ SCORE_AFTER_HM = (15, 35)  # session is done; candles for the day are final
 TREND_RULES = ("ORB", "VWAP_RECLAIM")
 
 
+def is_voided(payload: dict) -> bool:
+    """Signal struck from the paper record (payload['voided'] = reason). Used
+    for the 18-Sep max-pain-pin bug rows: history is kept, scoring skips them."""
+    return bool(payload.get("voided"))
+
+
 def _created_ist(created_at: datetime) -> datetime:
     """Signal rows store naive UTC — convert to IST."""
     if created_at.tzinfo is None:
@@ -91,7 +97,7 @@ def score_day(day_iso: str | None = None, user_id: str | None = None) -> int:
         todo = []
         for r in rows:
             p = json.loads(r.payload_json or "{}")
-            if "paper" not in p:
+            if "paper" not in p and not is_voided(p):
                 todo.append((r, p))
         if not todo:
             return 0
@@ -159,9 +165,11 @@ def provisional_today(user_id: str) -> list[dict]:
                         ScalpSignal.simulated.is_(False))
                 .order_by(ScalpSignal.created_at.asc())
                 .all())
-        sigs = [(r.symbol, r.rule, r.direction, json.loads(r.payload_json or "{}"),
-                 _created_ist(r.created_at)) for r in rows
-                if _created_ist(r.created_at).date().isoformat() == today]
+        sigs = [(r.symbol, r.rule, r.direction, p, _created_ist(r.created_at))
+                for r in rows
+                for p in [json.loads(r.payload_json or "{}")]
+                if _created_ist(r.created_at).date().isoformat() == today
+                and not is_voided(p)]
     if not sigs or any("paper" in p for _, _, _, p, _ in sigs):
         return []  # already finalized (or nothing yet) — the day table covers it
     bars_cache: dict[str, list[dict]] = {}
@@ -199,7 +207,8 @@ def paper_summary(user_id: str, days: int = 14) -> dict:
                         ScalpSignal.created_at >= cutoff)
                 .order_by(ScalpSignal.created_at.asc())
                 .all())
-        parsed = [(r, json.loads(r.payload_json or "{}")) for r in rows]
+        parsed = [(r, p) for r in rows for p in [json.loads(r.payload_json or "{}")]
+                  if not is_voided(p)]
 
     by_day: dict[str, dict] = {}
     by_rule: dict[str, dict] = {}
@@ -276,8 +285,9 @@ def live_day_sl_count(user_id: str, bars_by_symbol: dict[str, list[dict]]) -> in
                 .filter(ScalpSignal.user_id == user_id,
                         ScalpSignal.simulated.is_(False))
                 .all())
-        sigs = [(r, json.loads(r.payload_json or "{}")) for r in rows
-                if _created_ist(r.created_at).date().isoformat() == today]
+        sigs = [(r, p) for r in rows for p in [json.loads(r.payload_json or "{}")]
+                if _created_ist(r.created_at).date().isoformat() == today
+                and not is_voided(p)]
     count = 0
     fallback: dict[str, list[dict]] = {}
     for r, p in sigs:
@@ -336,8 +346,9 @@ def _emit_scorecards(day_iso: str) -> None:
         for r in rows:
             if _created_ist(r.created_at).date().isoformat() != day_iso:
                 continue
-            score = json.loads(r.payload_json or "{}").get("paper")
-            if score:
+            p = json.loads(r.payload_json or "{}")
+            score = p.get("paper")
+            if score and not is_voided(p):
                 per_user.setdefault(r.user_id, []).append(float(score["r"]))
         for uid, rs in per_user.items():
             wins = sum(1 for x in rs if x > 0)
