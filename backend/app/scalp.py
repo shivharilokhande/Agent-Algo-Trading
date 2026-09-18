@@ -175,6 +175,14 @@ def evaluate_rules(bars: list[dict], oi_walls: dict | None = None) -> list[dict]
                     "why": f"lost VWAP {vw:.1f} (spot {spot:.1f}) with EMA9<EMA20, RSI {r}"})
 
     # OI wall reject — approach within 0.15% of a heavy wall and stall/reverse
+    # RULE FIX 18-Sep-2026 12:xx IST (affects A/B/C alike — month-end review
+    # should split A before/after): when the top-OI CE strike and top-OI PE
+    # strike are the SAME strike, that is a max-pain pin, not a wall to fade —
+    # both directions evaluated true in one sweep on every 15-pt wobble around
+    # 23300 and opened PE+CE straddles (11:38/11:40, 12:10). Skip the rule.
+    if oi_walls and oi_walls.get("resistance") and \
+            oi_walls.get("resistance") == oi_walls.get("support"):
+        oi_walls = None
     if oi_walls:
         res, sup = oi_walls.get("resistance"), oi_walls.get("support")
         band = spot * 0.0015
@@ -186,12 +194,17 @@ def evaluate_rules(bars: list[dict], oi_walls: dict | None = None) -> list[dict]
         # 4-bar-old touch is the chop pattern that bled 18-Sep.
         hi_age = len(last5) - 1 - max(i for i, b in enumerate(last5) if b["h"] == recent_high)
         lo_age = len(last5) - 1 - max(i for i, b in enumerate(last5) if b["l"] == recent_low)
+        walls = []
         if res and abs(recent_high - res) <= band and spot < recent_high and not trend_up:
-            out.append({"rule": "WALL_REJECT", "direction": "PE", "touch_age": hi_age,
-                        "why": f"rejected {res:.0f} CE OI wall (high {recent_high:.1f}, spot {spot:.1f})"})
+            walls.append({"rule": "WALL_REJECT", "direction": "PE", "touch_age": hi_age,
+                          "why": f"rejected {res:.0f} CE OI wall (high {recent_high:.1f}, spot {spot:.1f})"})
         if sup and abs(recent_low - sup) <= band and spot > recent_low and not trend_dn:
-            out.append({"rule": "WALL_REJECT", "direction": "CE", "touch_age": lo_age,
-                        "why": f"bounced off {sup:.0f} PE OI wall (low {recent_low:.1f}, spot {spot:.1f})"})
+            walls.append({"rule": "WALL_REJECT", "direction": "CE", "touch_age": lo_age,
+                          "why": f"bounced off {sup:.0f} PE OI wall (low {recent_low:.1f}, spot {spot:.1f})"})
+        # both walls touched inside 5 bars = price is pinned between them; a
+        # PE+CE pair is a straddle that can only lose theta + charges
+        if len(walls) == 1:
+            out.extend(walls)
     for h in out:  # regime context for the paper-C gate (A/B ignore it)
         h["quality_ok"] = quality_ok
     return out

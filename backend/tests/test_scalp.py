@@ -96,6 +96,31 @@ def test_wall_reject_rule():
     closes = [24000] * 20 + [24030, 24060, 24080, 24096, 24098, 24060, 24030, 24010]
     hits = evaluate_rules(_bars(closes), {"resistance": 24100.0, "support": 23800.0})
     assert any(h["rule"] == "WALL_REJECT" and h["direction"] == "PE" for h in hits)
+    pe = next(h for h in hits if h["rule"] == "WALL_REJECT")
+    assert pe["touch_age"] == 3 and "quality_ok" in pe  # high was 4 bars back → age 3
+
+
+def test_wall_reject_pin_and_straddle_guard():
+    """18-Sep rule fix: top CE-OI and top PE-OI on the SAME strike is a max-pain
+    pin, not a wall — no WALL_REJECT. And when both walls are touched inside
+    the 5-bar window (flat tape), emit neither, never a PE+CE pair."""
+    from app.scalp import evaluate_rules
+
+    # 12:10 shape: wobble around 23300 with spot == VWAP (no trend either way);
+    # wall touches injected symmetrically so VWAP stays exactly 23300
+    flat = [23300.0] * 20 + [23301, 23299] * 3 + [23300, 23300]
+    bars = _bars(flat)
+    bars[-2]["h"] = 23314.0   # +12 on the high …
+    bars[-2]["l"] = 23286.0   # … −12 on the low of the SAME bar → VWAP unchanged
+    # same strike both sides → rule off entirely
+    assert not any(h["rule"] == "WALL_REJECT"
+                   for h in evaluate_rules(bars, {"resistance": 23300.0, "support": 23300.0}))
+    # two distinct walls, both touched within the band (0.15% ≈ 35 pts) → neither
+    hits = evaluate_rules(bars, {"resistance": 23315.0, "support": 23290.0})
+    assert not any(h["rule"] == "WALL_REJECT" for h in hits)
+    # one wall touched → still fires (the rule itself is intact)
+    hits = evaluate_rules(bars, {"resistance": 23315.0, "support": 23000.0})
+    assert [h["direction"] for h in hits if h["rule"] == "WALL_REJECT"] == ["PE"]
 
 
 def test_bias_filter_and_theta_cutoff():
